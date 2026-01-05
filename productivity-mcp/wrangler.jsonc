@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "productivity-mcp-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-03-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "USER_ID": "micaiah",
+    "TEAM": "micaiah,irene",
+    "WORKER_NAME": "productivity-mcp-server"
+  },
+  "migrations": [
+    {
+      "tag": "v6",
+      "new_sqlite_classes": ["ProductivityMCP"]
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "ProductivityMCP",
+        "name": "MCP_OBJECT"
+      }
+    ]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "productivity-brain",
+      "database_id": "be348cf9-552b-41ae-a1d8-cd20be25d6ee"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}

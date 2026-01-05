@@ -23,3 +23,5 @@ cd productivity-mcp
 npm run deploy
 npx wrangler deploy --config wrangler-irene.jsonc
 ```
+
+<!-- test deploy -->

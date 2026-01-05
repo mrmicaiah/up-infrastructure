@@ -1,0 +1,11 @@
+name = "email-bot-server"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "email-bot-db"
+database_id = "1f723e35-3d79-4f80-92a0-b73b9569a310"
+
+[vars]
+# Set secrets via: wrangler secret put ADMIN_API_KEY

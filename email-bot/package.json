@@ -1,0 +1,13 @@
+{
+  "name": "email-bot-server",
+  "version": "1.0.0",
+  "description": "Lead capture API for Untitled Publishers",
+  "main": "index.js",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

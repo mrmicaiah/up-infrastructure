@@ -63,10 +63,12 @@ export async function processSequenceEmails(env) {
           enrollment.from_email
         );
         
+        // For sequence emails, don't use foreign key - just log the send
+        // We store step_id in a separate column (or just track via enrollment)
         await env.DB.prepare(`
           INSERT INTO email_sends (id, email_id, lead_id, subscription_id, status, created_at)
-          VALUES (?, ?, ?, ?, 'sent', ?)
-        `).bind(sendId, enrollment.step_id, enrollment.lead_id, enrollment.subscription_id, new Date().toISOString()).run();
+          VALUES (?, NULL, ?, ?, 'sent', ?)
+        `).bind(sendId, enrollment.lead_id, enrollment.subscription_id, new Date().toISOString()).run();
         
         const nextStep = await env.DB.prepare(`
           SELECT * FROM sequence_steps 

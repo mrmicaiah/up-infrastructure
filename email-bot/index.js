@@ -119,6 +119,10 @@ export default {
       const id = url.pathname.split('/')[3];
       return handleExportListSubscribers(id, env);
     }
+    if (url.pathname.match(/^\/api\/lists\/[a-zA-Z0-9-]+\/import$/) && request.method === 'POST') {
+      const id = url.pathname.split('/')[3];
+      return handleImportSubscribers(id, request, env);
+    }
 
     // === LEGACY LEADS (backward compatible) ===
     if (url.pathname === '/api/leads' && request.method === 'GET') {
@@ -473,6 +477,7 @@ async function handleTrackClick(request, env) {
 async function handlePublicUnsubscribe(request, env) {
   const url = new URL(request.url);
   const sendId = url.searchParams.get('sid');
+  let listName = 'this list';
   
   if (sendId) {
     try {
@@ -484,6 +489,14 @@ async function handlePublicUnsubscribe(request, env) {
       if (send) {
         // Unsubscribe from the specific list (via subscription)
         if (send.subscription_id) {
+          // Get list name for the confirmation page
+          const sub = await env.DB.prepare(`
+            SELECT l.name FROM subscriptions s 
+            JOIN lists l ON s.list_id = l.id 
+            WHERE s.id = ?
+          `).bind(send.subscription_id).first();
+          if (sub) listName = sub.name;
+          
           await env.DB.prepare(
             'UPDATE subscriptions SET status = ?, unsubscribed_at = ? WHERE id = ?'
           ).bind('unsubscribed', new Date().toISOString(), send.subscription_id).run();
@@ -502,11 +515,14 @@ async function handlePublicUnsubscribe(request, env) {
   return new Response(`
     <!DOCTYPE html>
     <html>
-    <head><title>Unsubscribed</title></head>
-    <body style="font-family: sans-serif; text-align: center; padding: 50px;">
-      <h1>You've been unsubscribed</h1>
-      <p>You will no longer receive emails from this list.</p>
-      <p><a href="https://untitledpublishers.com">Return to website</a></p>
+    <head>
+      <title>Unsubscribed</title>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+    </head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px; max-width: 500px; margin: 0 auto;">
+      <h1 style="color: #333;">You've been unsubscribed</h1>
+      <p style="color: #666; font-size: 18px;">You will no longer receive emails from <strong>${listName}</strong>.</p>
+      <p style="margin-top: 30px;"><a href="https://untitledpublishers.com" style="color: #007bff; text-decoration: none;">Return to website</a></p>
     </body>
     </html>
   `, { headers: { 'Content-Type': 'text/html' } });
@@ -711,10 +727,15 @@ async function handleListStats(id, env) {
 // ==================== LIST SUBSCRIBERS ====================
 
 async function handleGetListSubscribers(listId, request, env) {
-  const list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+  // Look up by ID first, then by slug
+  let list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+  if (!list) {
+    list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listId).first();
+  }
   if (!list) {
     return jsonResponse({ error: 'List not found' }, 404);
   }
+  listId = list.id; // Use actual ID for queries
   
   const url = new URL(request.url);
   const status = url.searchParams.get('status');
@@ -766,10 +787,15 @@ async function handleAddSubscriber(listId, request, env) {
       return jsonResponse({ error: 'Valid email required' }, 400);
     }
     
-    const list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+    // Look up by ID first, then by slug
+    let list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+    if (!list) {
+      list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listId).first();
+    }
     if (!list) {
       return jsonResponse({ error: 'List not found' }, 404);
     }
+    listId = list.id; // Use actual ID for queries
     
     const email = data.email.toLowerCase().trim();
     const now = new Date().toISOString();
@@ -819,9 +845,18 @@ async function handleAddSubscriber(listId, request, env) {
 }
 
 async function handleRemoveSubscriber(listId, subscriptionId, env) {
+  // Look up list by ID first, then by slug
+  let list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+  if (!list) {
+    list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listId).first();
+  }
+  if (!list) {
+    return jsonResponse({ error: 'List not found' }, 404);
+  }
+  
   const sub = await env.DB.prepare(
     'SELECT * FROM subscriptions WHERE id = ? AND list_id = ?'
-  ).bind(subscriptionId, listId).first();
+  ).bind(subscriptionId, list.id).first();
   
   if (!sub) {
     return jsonResponse({ error: 'Subscription not found' }, 404);
@@ -835,7 +870,11 @@ async function handleRemoveSubscriber(listId, subscriptionId, env) {
 }
 
 async function handleExportListSubscribers(listId, env) {
-  const list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+  // Look up list by ID first, then by slug
+  let list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+  if (!list) {
+    list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listId).first();
+  }
   if (!list) {
     return jsonResponse({ error: 'List not found' }, 404);
   }
@@ -847,7 +886,7 @@ async function handleExportListSubscribers(listId, env) {
     WHERE s.list_id = ? AND s.status = 'active'
     ORDER BY s.subscribed_at DESC
     LIMIT 50000
-  `).bind(listId).all();
+  `).bind(list.id).all();
   
   const headers = ['email', 'name', 'source', 'funnel', 'status', 'subscribed_at'];
   let csv = headers.join(',') + '\n';
@@ -862,6 +901,157 @@ async function handleExportListSubscribers(listId, env) {
       'Content-Disposition': `attachment; filename="${list.slug}-subscribers-${new Date().toISOString().split('T')[0]}.csv"`
     }
   });
+}
+
+async function handleImportSubscribers(listId, request, env) {
+  try {
+    // Look up list by ID first, then by slug
+    let list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(listId).first();
+    if (!list) {
+      list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listId).first();
+    }
+    if (!list) {
+      return jsonResponse({ error: 'List not found' }, 404);
+    }
+    
+    const contentType = request.headers.get('Content-Type');
+    let csvText;
+    
+    if (contentType?.includes('text/csv')) {
+      csvText = await request.text();
+    } else if (contentType?.includes('application/json')) {
+      const data = await request.json();
+      csvText = data.csv;
+    } else {
+      return jsonResponse({ error: 'Content-Type must be text/csv or application/json with csv field' }, 400);
+    }
+    
+    if (!csvText || !csvText.trim()) {
+      return jsonResponse({ error: 'CSV data required' }, 400);
+    }
+    
+    // Parse CSV
+    const lines = csvText.trim().split('\n');
+    if (lines.length < 2) {
+      return jsonResponse({ error: 'CSV must have header row and at least one data row' }, 400);
+    }
+    
+    // Parse header
+    const headerLine = lines[0].toLowerCase();
+    const headers = parseCSVLine(headerLine);
+    const emailIndex = headers.findIndex(h => h === 'email');
+    const nameIndex = headers.findIndex(h => h === 'name');
+    const sourceIndex = headers.findIndex(h => h === 'source');
+    
+    if (emailIndex === -1) {
+      return jsonResponse({ error: 'CSV must have an "email" column' }, 400);
+    }
+    
+    const now = new Date().toISOString();
+    let imported = 0;
+    let skipped = 0;
+    let errors = [];
+    
+    // Process each row
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      try {
+        const values = parseCSVLine(line);
+        const email = values[emailIndex]?.toLowerCase().trim();
+        
+        if (!email || !isValidEmail(email)) {
+          skipped++;
+          continue;
+        }
+        
+        const name = nameIndex !== -1 ? values[nameIndex]?.trim() : null;
+        const source = sourceIndex !== -1 ? values[sourceIndex]?.trim() : 'import';
+        
+        // Get or create lead
+        let lead = await env.DB.prepare('SELECT * FROM leads WHERE email = ?').bind(email).first();
+        let leadId;
+        
+        if (!lead) {
+          const result = await env.DB.prepare(`
+            INSERT INTO leads (email, name, source, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+          `).bind(email, name, source, now, now).run();
+          leadId = result.meta.last_row_id;
+        } else {
+          leadId = lead.id;
+        }
+        
+        // Check existing subscription
+        const existingSub = await env.DB.prepare(
+          'SELECT * FROM subscriptions WHERE lead_id = ? AND list_id = ?'
+        ).bind(leadId, list.id).first();
+        
+        if (existingSub) {
+          if (existingSub.status === 'active') {
+            skipped++;
+            continue;
+          }
+          // Reactivate
+          await env.DB.prepare(`
+            UPDATE subscriptions SET status = 'active', unsubscribed_at = NULL, subscribed_at = ? WHERE id = ?
+          `).bind(now, existingSub.id).run();
+        } else {
+          // Create new subscription
+          const subId = generateId();
+          await env.DB.prepare(`
+            INSERT INTO subscriptions (id, lead_id, list_id, status, source, subscribed_at, created_at)
+            VALUES (?, ?, ?, 'active', ?, ?, ?)
+          `).bind(subId, leadId, list.id, source, now, now).run();
+        }
+        
+        imported++;
+      } catch (e) {
+        errors.push({ row: i + 1, error: e.message });
+        if (errors.length >= 10) break; // Stop after 10 errors
+      }
+    }
+    
+    return jsonResponse({
+      success: true,
+      imported,
+      skipped,
+      total: lines.length - 1,
+      errors: errors.length > 0 ? errors : undefined
+    });
+  } catch (error) {
+    console.error('Import error:', error);
+    return jsonResponse({ error: 'Failed to import subscribers: ' + error.message }, 500);
+  }
+}
+
+// Simple CSV line parser (handles quoted fields)
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  
+  return result;
 }
 
 // ==================== SUBSCRIBE (NEW LIST-AWARE) ====================

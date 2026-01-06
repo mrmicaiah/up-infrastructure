@@ -5,12 +5,10 @@
 import { generateId, sendEmailViaSES, renderEmail, jsonResponse } from './lib.js';
 import { handleSendEmail } from './handlers-emails.js';
 
-export async function processSequenceEmails(env, debug = false) {
-  const debugLog = [];
+export async function processSequenceEmails(env) {
+  const results = { processed: 0, sent: 0, failed: 0, errors: [] };
   
   try {
-    debugLog.push(`Starting processSequenceEmails at ${new Date().toISOString()}`);
-    
     const due = await env.DB.prepare(`
       SELECT e.id as enrollment_id, e.sequence_id, e.current_step, e.subscription_id,
              ss.id as step_id, ss.subject, ss.preview_text, ss.body_html, ss.body_text, ss.delay_minutes,
@@ -29,29 +27,17 @@ export async function processSequenceEmails(env, debug = false) {
       LIMIT 50
     `).all();
     
-    debugLog.push(`Found ${due.results?.length || 0} enrollments due`);
+    results.found = due.results?.length || 0;
     
     if (!due.results || due.results.length === 0) {
-      if (debug) {
-        // Also check what enrollments exist at all
-        const allEnrollments = await env.DB.prepare(`
-          SELECT e.*, datetime('now') as db_now
-          FROM sequence_enrollments e
-          WHERE e.status = 'active'
-          LIMIT 10
-        `).all();
-        debugLog.push(`Active enrollments: ${JSON.stringify(allEnrollments.results)}`);
-      }
-      return debug ? { success: true, log: debugLog, sent: 0 } : undefined;
+      return results;
     }
     
     const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
-    let sentCount = 0;
     
     for (const enrollment of due.results) {
+      results.processed++;
       try {
-        debugLog.push(`Processing: ${enrollment.email} - ${enrollment.subject}`);
-        
         const sendId = generateId();
         const subscriber = { email: enrollment.email, name: enrollment.name };
         const emailObj = {
@@ -66,8 +52,6 @@ export async function processSequenceEmails(env, debug = false) {
         
         const renderedHtml = renderEmail(emailObj, subscriber, sendId, baseUrl, list);
         
-        debugLog.push(`Sending via SES from ${enrollment.from_email}...`);
-        
         await sendEmailViaSES(
           env,
           enrollment.email,
@@ -77,8 +61,6 @@ export async function processSequenceEmails(env, debug = false) {
           enrollment.from_name,
           enrollment.from_email
         );
-        
-        debugLog.push(`SES send successful for ${enrollment.email}`);
         
         await env.DB.prepare(`
           INSERT INTO email_sends (id, email_id, lead_id, subscription_id, status, created_at)
@@ -97,57 +79,112 @@ export async function processSequenceEmails(env, debug = false) {
             SET current_step = current_step + 1, next_send_at = ?
             WHERE id = ?
           `).bind(nextSendAt, enrollment.enrollment_id).run();
-          debugLog.push(`Advanced to step ${enrollment.current_step + 1}, next send at ${nextSendAt}`);
         } else {
           await env.DB.prepare(`
             UPDATE sequence_enrollments 
             SET status = 'completed', completed_at = datetime('now'), current_step = current_step + 1
             WHERE id = ?
           `).bind(enrollment.enrollment_id).run();
-          debugLog.push(`Completed sequence for ${enrollment.email}`);
         }
         
-        sentCount++;
+        results.sent++;
       } catch (error) {
-        debugLog.push(`ERROR for ${enrollment.email}: ${error.message}`);
+        results.failed++;
+        results.errors.push({
+          enrollment_id: enrollment.enrollment_id,
+          email: enrollment.email,
+          error: error.message
+        });
         console.error('Sequence email failed:', enrollment.enrollment_id, error);
       }
     }
-    
-    debugLog.push(`Completed. Sent ${sentCount} emails.`);
-    return debug ? { success: true, log: debugLog, sent: sentCount } : undefined;
-    
   } catch (error) {
-    debugLog.push(`FATAL ERROR: ${error.message}`);
+    results.errors.push({ stage: 'query', error: error.message });
     console.error('Process sequence emails error:', error);
-    return debug ? { success: false, log: debugLog, error: error.message } : undefined;
   }
+  
+  return results;
 }
 
 export async function processScheduledCampaigns(env) {
+  const results = { processed: 0, sent: 0, failed: 0, errors: [] };
+  
   try {
     const due = await env.DB.prepare(`
       SELECT id FROM emails 
       WHERE status = 'scheduled' AND scheduled_at <= datetime('now')
     `).all();
     
-    if (!due.results || due.results.length === 0) return;
+    results.found = due.results?.length || 0;
+    
+    if (!due.results || due.results.length === 0) {
+      return results;
+    }
     
     for (const campaign of due.results) {
+      results.processed++;
       try {
         await handleSendEmail(campaign.id, null, env);
+        results.sent++;
         console.log('Scheduled campaign sent:', campaign.id);
       } catch (error) {
+        results.failed++;
+        results.errors.push({ campaign_id: campaign.id, error: error.message });
         console.error('Scheduled campaign failed:', campaign.id, error);
       }
     }
   } catch (error) {
+    results.errors.push({ stage: 'query', error: error.message });
     console.error('Process scheduled campaigns error:', error);
   }
+  
+  return results;
 }
 
-// Manual trigger endpoint handler
+// Manual trigger endpoint for debugging
 export async function handleProcessSequences(request, env) {
-  const result = await processSequenceEmails(env, true);
-  return jsonResponse(result);
+  try {
+    // First, show what the query would find
+    const debug = await env.DB.prepare(`
+      SELECT 
+        e.id as enrollment_id, 
+        e.status as enrollment_status,
+        e.current_step,
+        e.next_send_at,
+        datetime('now') as current_time,
+        e.next_send_at <= datetime('now') as is_due,
+        ss.id as step_id,
+        ss.position as step_position,
+        ss.status as step_status,
+        ss.subject,
+        sub.status as subscription_status,
+        l.email,
+        seq.status as sequence_status
+      FROM sequence_enrollments e
+      LEFT JOIN sequence_steps ss ON ss.sequence_id = e.sequence_id AND ss.position = e.current_step + 1
+      LEFT JOIN subscriptions sub ON sub.id = e.subscription_id
+      LEFT JOIN leads l ON l.id = sub.lead_id
+      LEFT JOIN sequences seq ON seq.id = e.sequence_id
+      WHERE e.status = 'active'
+      LIMIT 10
+    `).all();
+    
+    // Run the actual processing
+    const sequenceResults = await processSequenceEmails(env);
+    const campaignResults = await processScheduledCampaigns(env);
+    
+    return jsonResponse({
+      success: true,
+      debug_enrollments: debug.results,
+      sequences: sequenceResults,
+      campaigns: campaignResults,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    return jsonResponse({
+      success: false,
+      error: error.message,
+      stack: error.stack
+    }, 500);
+  }
 }

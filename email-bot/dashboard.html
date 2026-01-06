@@ -1,0 +1,1445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Email Platform - Untitled Publishers</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    :root {
+      --copper: #b87333;
+      --copper-light: #daa06d;
+      --brass: #cd9b1d;
+      --dark-bronze: #3d2914;
+      --cream: #f5f0e6;
+      --glass-bg: rgba(61, 41, 20, 0.85);
+      --glass-border: rgba(184, 115, 51, 0.4);
+    }
+    
+    body {
+      font-family: 'Georgia', serif;
+      background: linear-gradient(135deg, #1a1209 0%, #2d1f0f 50%, #1a1209 100%);
+      min-height: 100vh;
+      color: var(--cream);
+    }
+    
+    /* Login Screen */
+    .login-screen {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .login-box {
+      background: var(--glass-bg);
+      border: 2px solid var(--glass-border);
+      border-radius: 16px;
+      padding: 40px;
+      text-align: center;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    }
+    
+    .login-box h1 {
+      color: var(--copper-light);
+      margin-bottom: 8px;
+      font-size: 1.8rem;
+    }
+    
+    .login-box p {
+      color: var(--cream);
+      opacity: 0.7;
+      margin-bottom: 24px;
+    }
+    
+    .pin-input {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+    
+    .pin-input input {
+      width: 50px;
+      height: 60px;
+      text-align: center;
+      font-size: 24px;
+      border: 2px solid var(--glass-border);
+      border-radius: 8px;
+      background: rgba(0,0,0,0.3);
+      color: var(--copper-light);
+      outline: none;
+    }
+    
+    .pin-input input:focus {
+      border-color: var(--copper);
+      box-shadow: 0 0 10px rgba(184, 115, 51, 0.3);
+    }
+    
+    .error-msg {
+      color: #ff6b6b;
+      margin-top: 10px;
+      display: none;
+    }
+    
+    /* Main App */
+    .app { display: none; }
+    .app.active { display: block; }
+    
+    header {
+      background: var(--glass-bg);
+      border-bottom: 2px solid var(--glass-border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    header h1 {
+      color: var(--copper-light);
+      font-size: 1.4rem;
+    }
+    
+    .header-stats {
+      display: flex;
+      gap: 20px;
+      font-size: 0.9rem;
+    }
+    
+    .header-stats span {
+      color: var(--cream);
+      opacity: 0.8;
+    }
+    
+    .header-stats strong {
+      color: var(--copper-light);
+    }
+    
+    /* Tabs */
+    .tabs {
+      display: flex;
+      background: rgba(0,0,0,0.3);
+      border-bottom: 2px solid var(--glass-border);
+      overflow-x: auto;
+    }
+    
+    .tab {
+      padding: 14px 24px;
+      cursor: pointer;
+      color: var(--cream);
+      opacity: 0.7;
+      border: none;
+      background: none;
+      font-family: inherit;
+      font-size: 0.95rem;
+      white-space: nowrap;
+      transition: all 0.2s;
+    }
+    
+    .tab:hover {
+      opacity: 1;
+      background: rgba(184, 115, 51, 0.1);
+    }
+    
+    .tab.active {
+      opacity: 1;
+      color: var(--copper-light);
+      border-bottom: 3px solid var(--copper);
+      background: rgba(184, 115, 51, 0.15);
+    }
+    
+    /* Content */
+    .content {
+      padding: 24px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+    
+    .panel {
+      display: none;
+    }
+    
+    .panel.active {
+      display: block;
+    }
+    
+    /* Cards */
+    .card {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+      backdrop-filter: blur(10px);
+    }
+    
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+    }
+    
+    .card-header h2 {
+      color: var(--copper-light);
+      font-size: 1.2rem;
+    }
+    
+    /* Buttons */
+    .btn {
+      padding: 10px 20px;
+      border: 2px solid var(--copper);
+      background: transparent;
+      color: var(--copper-light);
+      border-radius: 6px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.9rem;
+      transition: all 0.2s;
+    }
+    
+    .btn:hover {
+      background: var(--copper);
+      color: var(--dark-bronze);
+    }
+    
+    .btn-primary {
+      background: var(--copper);
+      color: var(--dark-bronze);
+    }
+    
+    .btn-primary:hover {
+      background: var(--copper-light);
+    }
+    
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.8rem;
+    }
+    
+    .btn-danger {
+      border-color: #c0392b;
+      color: #e74c3c;
+    }
+    
+    .btn-danger:hover {
+      background: #c0392b;
+      color: white;
+    }
+    
+    /* Tables */
+    .table-container {
+      overflow-x: auto;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    th, td {
+      padding: 12px;
+      text-align: left;
+      border-bottom: 1px solid var(--glass-border);
+    }
+    
+    th {
+      color: var(--copper-light);
+      font-weight: normal;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    td {
+      color: var(--cream);
+    }
+    
+    tr:hover {
+      background: rgba(184, 115, 51, 0.1);
+    }
+    
+    /* Forms */
+    .form-group {
+      margin-bottom: 16px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--copper-light);
+      font-size: 0.9rem;
+    }
+    
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--glass-border);
+      border-radius: 6px;
+      background: rgba(0,0,0,0.3);
+      color: var(--cream);
+      font-family: inherit;
+      font-size: 0.95rem;
+    }
+    
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--copper);
+    }
+    
+    .form-group textarea {
+      min-height: 120px;
+      resize: vertical;
+    }
+    
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .modal-overlay.active {
+      display: flex;
+    }
+    
+    .modal {
+      background: var(--glass-bg);
+      border: 2px solid var(--glass-border);
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 600px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      backdrop-filter: blur(10px);
+    }
+    
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    
+    .modal-header h3 {
+      color: var(--copper-light);
+    }
+    
+    .modal-close {
+      background: none;
+      border: none;
+      color: var(--cream);
+      font-size: 1.5rem;
+      cursor: pointer;
+      opacity: 0.7;
+    }
+    
+    .modal-close:hover {
+      opacity: 1;
+    }
+    
+    .modal-footer {
+      display: flex;
+      gap: 12px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+    
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    .stat-card {
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+    }
+    
+    .stat-card .value {
+      font-size: 2.5rem;
+      color: var(--copper-light);
+      font-weight: bold;
+    }
+    
+    .stat-card .label {
+      color: var(--cream);
+      opacity: 0.7;
+      font-size: 0.9rem;
+      margin-top: 4px;
+    }
+    
+    /* Status badges */
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.8rem;
+    }
+    
+    .badge-active {
+      background: rgba(39, 174, 96, 0.2);
+      color: #2ecc71;
+      border: 1px solid rgba(39, 174, 96, 0.4);
+    }
+    
+    .badge-draft {
+      background: rgba(241, 196, 15, 0.2);
+      color: #f1c40f;
+      border: 1px solid rgba(241, 196, 15, 0.4);
+    }
+    
+    .badge-sent {
+      background: rgba(52, 152, 219, 0.2);
+      color: #3498db;
+      border: 1px solid rgba(52, 152, 219, 0.4);
+    }
+    
+    .badge-archived {
+      background: rgba(149, 165, 166, 0.2);
+      color: #95a5a6;
+      border: 1px solid rgba(149, 165, 166, 0.4);
+    }
+    
+    /* Loading */
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: var(--cream);
+      opacity: 0.7;
+    }
+    
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--cream);
+      opacity: 0.6;
+    }
+    
+    .empty-state p {
+      margin-bottom: 20px;
+    }
+    
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background: var(--glass-bg);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      padding: 16px 24px;
+      color: var(--cream);
+      z-index: 2000;
+      display: none;
+      backdrop-filter: blur(10px);
+    }
+    
+    .toast.success {
+      border-color: #27ae60;
+    }
+    
+    .toast.error {
+      border-color: #c0392b;
+    }
+    
+    .toast.show {
+      display: block;
+      animation: slideIn 0.3s ease;
+    }
+    
+    @keyframes slideIn {
+      from { transform: translateX(100%); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    
+    /* Actions */
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+    
+    /* Filters */
+    .filters {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    
+    .filters select,
+    .filters input {
+      padding: 8px 12px;
+      border: 1px solid var(--glass-border);
+      border-radius: 6px;
+      background: rgba(0,0,0,0.3);
+      color: var(--cream);
+      font-family: inherit;
+    }
+    
+    /* Responsive */
+    @media (max-width: 768px) {
+      .form-row {
+        grid-template-columns: 1fr;
+      }
+      
+      .header-stats {
+        display: none;
+      }
+      
+      .tab {
+        padding: 12px 16px;
+        font-size: 0.85rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div class="login-screen" id="loginScreen">
+    <div class="login-box">
+      <h1>📧 Email Platform</h1>
+      <p>Untitled Publishers</p>
+      <div class="pin-input">
+        <input type="password" maxlength="1" data-pin="0" autofocus>
+        <input type="password" maxlength="1" data-pin="1">
+        <input type="password" maxlength="1" data-pin="2">
+        <input type="password" maxlength="1" data-pin="3">
+      </div>
+      <p class="error-msg" id="pinError">Invalid PIN</p>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div class="app" id="app">
+    <header>
+      <h1>📧 Email Platform</h1>
+      <div class="header-stats">
+        <span>Lists: <strong id="statLists">-</strong></span>
+        <span>Subscribers: <strong id="statSubscribers">-</strong></span>
+        <span>Campaigns: <strong id="statCampaigns">-</strong></span>
+      </div>
+    </header>
+    
+    <div class="tabs">
+      <button class="tab active" data-tab="stats">📊 Stats</button>
+      <button class="tab" data-tab="lists">📋 Lists</button>
+      <button class="tab" data-tab="subscribers">👥 Subscribers</button>
+      <button class="tab" data-tab="sequences">🔄 Sequences</button>
+      <button class="tab" data-tab="templates">📝 Templates</button>
+      <button class="tab" data-tab="campaigns">✉️ Campaigns</button>
+    </div>
+    
+    <div class="content">
+      <!-- Stats Panel -->
+      <div class="panel active" id="panel-stats">
+        <div class="stats-grid" id="statsGrid">
+          <div class="loading">Loading stats...</div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h2>Last 7 Days</h2>
+          </div>
+          <div id="recentActivity">
+            <div class="loading">Loading...</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Lists Panel -->
+      <div class="panel" id="panel-lists">
+        <div class="card">
+          <div class="card-header">
+            <h2>Email Lists</h2>
+            <button class="btn btn-primary" onclick="openModal('list')">+ New List</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Slug</th>
+                  <th>Subscribers</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="listsTable">
+                <tr><td colspan="5" class="loading">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Subscribers Panel -->
+      <div class="panel" id="panel-subscribers">
+        <div class="card">
+          <div class="card-header">
+            <h2>Subscribers</h2>
+            <button class="btn btn-primary" onclick="openModal('subscriber')">+ Add Subscriber</button>
+          </div>
+          <div class="filters">
+            <select id="filterList" onchange="loadSubscribers()">
+              <option value="">All Lists</option>
+            </select>
+            <input type="text" id="filterSearch" placeholder="Search email..." onkeyup="debounceSearch()">
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Name</th>
+                  <th>Source</th>
+                  <th>Subscribed</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="subscribersTable">
+                <tr><td colspan="5" class="loading">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Sequences Panel -->
+      <div class="panel" id="panel-sequences">
+        <div class="card">
+          <div class="card-header">
+            <h2>Sequences</h2>
+            <button class="btn btn-primary" onclick="openModal('sequence')">+ New Sequence</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>List</th>
+                  <th>Steps</th>
+                  <th>Active</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sequencesTable">
+                <tr><td colspan="6" class="loading">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Templates Panel -->
+      <div class="panel" id="panel-templates">
+        <div class="card">
+          <div class="card-header">
+            <h2>Email Templates</h2>
+            <button class="btn btn-primary" onclick="openModal('template')">+ New Template</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Subject</th>
+                  <th>Category</th>
+                  <th>Updated</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="templatesTable">
+                <tr><td colspan="5" class="loading">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Campaigns Panel -->
+      <div class="panel" id="panel-campaigns">
+        <div class="card">
+          <div class="card-header">
+            <h2>Email Campaigns</h2>
+            <button class="btn btn-primary" onclick="openModal('campaign')">+ New Campaign</button>
+          </div>
+          <div class="filters">
+            <select id="filterCampaignStatus" onchange="loadCampaigns()">
+              <option value="">All Status</option>
+              <option value="draft">Draft</option>
+              <option value="scheduled">Scheduled</option>
+              <option value="sent">Sent</option>
+            </select>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Subject</th>
+                  <th>List</th>
+                  <th>Status</th>
+                  <th>Sent</th>
+                  <th>Opens</th>
+                  <th>Clicks</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="campaignsTable">
+                <tr><td colspan="7" class="loading">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Modal</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API_BASE = 'https://email-bot-server.micaiah-tasks.workers.dev';
+    const CORRECT_PIN = '1987';
+    let API_KEY = '';
+    let currentLists = [];
+    let searchTimeout = null;
+    
+    // PIN Login
+    const pinInputs = document.querySelectorAll('.pin-input input');
+    pinInputs.forEach((input, index) => {
+      input.addEventListener('input', (e) => {
+        if (e.target.value.length === 1 && index < pinInputs.length - 1) {
+          pinInputs[index + 1].focus();
+        }
+        checkPin();
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Backspace' && !e.target.value && index > 0) {
+          pinInputs[index - 1].focus();
+        }
+      });
+    });
+    
+    function checkPin() {
+      const pin = Array.from(pinInputs).map(i => i.value).join('');
+      if (pin.length === 4) {
+        if (pin === CORRECT_PIN) {
+          API_KEY = 'abc123';
+          document.getElementById('loginScreen').style.display = 'none';
+          document.getElementById('app').classList.add('active');
+          initApp();
+        } else {
+          document.getElementById('pinError').style.display = 'block';
+          pinInputs.forEach(i => i.value = '');
+          pinInputs[0].focus();
+        }
+      }
+    }
+    
+    // API Helper
+    async function api(endpoint, method = 'GET', body = null) {
+      const options = {
+        method,
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json'
+        }
+      };
+      if (body) options.body = JSON.stringify(body);
+      
+      const res = await fetch(`${API_BASE}${endpoint}`, options);
+      return res.json();
+    }
+    
+    // Toast
+    function showToast(message, type = 'success') {
+      const toast = document.getElementById('toast');
+      toast.textContent = message;
+      toast.className = `toast show ${type}`;
+      setTimeout(() => toast.classList.remove('show'), 3000);
+    }
+    
+    // Tabs
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(`panel-${tab.dataset.tab}`).classList.add('active');
+      });
+    });
+    
+    // Init App
+    async function initApp() {
+      await loadStats();
+      await loadLists();
+      await loadSubscribers();
+      await loadSequences();
+      await loadTemplates();
+      await loadCampaigns();
+    }
+    
+    // Load Stats
+    async function loadStats() {
+      const data = await api('/api/stats');
+      
+      document.getElementById('statLists').textContent = data.lists?.length || 0;
+      document.getElementById('statSubscribers').textContent = data.total || 0;
+      document.getElementById('statCampaigns').textContent = data.emails?.reduce((a, e) => a + e.count, 0) || 0;
+      
+      document.getElementById('statsGrid').innerHTML = `
+        <div class="stat-card">
+          <div class="value">${data.total || 0}</div>
+          <div class="label">Total Leads</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">${data.lists?.length || 0}</div>
+          <div class="label">Active Lists</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">${data.emails?.find(e => e.status === 'sent')?.count || 0}</div>
+          <div class="label">Campaigns Sent</div>
+        </div>
+        <div class="stat-card">
+          <div class="value">${data.last_7_days?.reduce((a, d) => a + d.count, 0) || 0}</div>
+          <div class="label">New This Week</div>
+        </div>
+      `;
+      
+      const recentHtml = data.last_7_days?.length 
+        ? `<table><thead><tr><th>Date</th><th>New Subscribers</th></tr></thead><tbody>
+            ${data.last_7_days.map(d => `<tr><td>${d.date}</td><td>${d.count}</td></tr>`).join('')}
+           </tbody></table>`
+        : '<p class="empty-state">No recent activity</p>';
+      document.getElementById('recentActivity').innerHTML = recentHtml;
+    }
+    
+    // Load Lists
+    async function loadLists() {
+      const data = await api('/api/lists?status=all');
+      currentLists = data.lists || [];
+      
+      // Update filter dropdown
+      document.getElementById('filterList').innerHTML = '<option value="">All Lists</option>' +
+        currentLists.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
+      
+      if (!currentLists.length) {
+        document.getElementById('listsTable').innerHTML = '<tr><td colspan="5" class="empty-state">No lists yet</td></tr>';
+        return;
+      }
+      
+      document.getElementById('listsTable').innerHTML = currentLists.map(list => `
+        <tr>
+          <td>${list.name}</td>
+          <td><code>${list.slug}</code></td>
+          <td>${list.subscriber_count || 0}</td>
+          <td><span class="badge badge-${list.status}">${list.status}</span></td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="editList('${list.id}')">Edit</button>
+            <button class="btn btn-sm btn-danger" onclick="archiveList('${list.id}')">Archive</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    
+    // Load Subscribers
+    async function loadSubscribers() {
+      const listId = document.getElementById('filterList').value;
+      const search = document.getElementById('filterSearch').value;
+      
+      let endpoint = listId ? `/api/lists/${listId}/subscribers` : '/api/subscribers';
+      if (search) endpoint += `?search=${encodeURIComponent(search)}`;
+      
+      const data = await api(endpoint);
+      const subscribers = data.subscribers || [];
+      
+      if (!subscribers.length) {
+        document.getElementById('subscribersTable').innerHTML = '<tr><td colspan="5" class="empty-state">No subscribers found</td></tr>';
+        return;
+      }
+      
+      document.getElementById('subscribersTable').innerHTML = subscribers.map(sub => `
+        <tr>
+          <td>${sub.email}</td>
+          <td>${sub.name || '-'}</td>
+          <td>${sub.source || '-'}</td>
+          <td>${formatDate(sub.subscribed_at || sub.created_at)}</td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="viewSubscriber('${sub.id || sub.lead_id}')">View</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    
+    function debounceSearch() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(loadSubscribers, 300);
+    }
+    
+    // Load Sequences
+    async function loadSequences() {
+      const data = await api('/api/sequences');
+      const sequences = data.sequences || [];
+      
+      if (!sequences.length) {
+        document.getElementById('sequencesTable').innerHTML = '<tr><td colspan="6" class="empty-state">No sequences yet</td></tr>';
+        return;
+      }
+      
+      document.getElementById('sequencesTable').innerHTML = sequences.map(seq => `
+        <tr>
+          <td>${seq.name}</td>
+          <td>${seq.list_name || '-'}</td>
+          <td>${seq.step_count || 0}</td>
+          <td>${seq.active_enrollments || 0}</td>
+          <td><span class="badge badge-${seq.status}">${seq.status}</span></td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="editSequence('${seq.id}')">Edit</button>
+            <button class="btn btn-sm" onclick="viewSequenceSteps('${seq.id}')">Steps</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    
+    // Load Templates
+    async function loadTemplates() {
+      const data = await api('/api/templates');
+      const templates = data.templates || [];
+      
+      if (!templates.length) {
+        document.getElementById('templatesTable').innerHTML = '<tr><td colspan="5" class="empty-state">No templates yet</td></tr>';
+        return;
+      }
+      
+      document.getElementById('templatesTable').innerHTML = templates.map(tpl => `
+        <tr>
+          <td>${tpl.name}</td>
+          <td>${tpl.subject || '-'}</td>
+          <td>${tpl.category || '-'}</td>
+          <td>${formatDate(tpl.updated_at)}</td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="editTemplate('${tpl.id}')">Edit</button>
+            <button class="btn btn-sm" onclick="duplicateTemplate('${tpl.id}')">Duplicate</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteTemplate('${tpl.id}')">Delete</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+    
+    // Load Campaigns
+    async function loadCampaigns() {
+      const status = document.getElementById('filterCampaignStatus').value;
+      let endpoint = '/api/emails';
+      if (status) endpoint += `?status=${status}`;
+      
+      const data = await api(endpoint);
+      const campaigns = data.emails || [];
+      
+      if (!campaigns.length) {
+        document.getElementById('campaignsTable').innerHTML = '<tr><td colspan="7" class="empty-state">No campaigns yet</td></tr>';
+        return;
+      }
+      
+      document.getElementById('campaignsTable').innerHTML = campaigns.map(email => `
+        <tr>
+          <td>${email.subject}</td>
+          <td>${email.list_name || 'All'}</td>
+          <td><span class="badge badge-${email.status}">${email.status}</span></td>
+          <td>${email.sent_count || '-'}</td>
+          <td>-</td>
+          <td>-</td>
+          <td class="actions">
+            <button class="btn btn-sm" onclick="editCampaign('${email.id}')">Edit</button>
+            ${email.status === 'draft' ? `<button class="btn btn-sm btn-primary" onclick="sendCampaign('${email.id}')">Send</button>` : ''}
+          </td>
+        </tr>
+      `).join('');
+    }
+    
+    // Modal Functions
+    function openModal(type, id = null) {
+      document.getElementById('modalOverlay').classList.add('active');
+      
+      switch(type) {
+        case 'list':
+          document.getElementById('modalTitle').textContent = id ? 'Edit List' : 'New List';
+          document.getElementById('modalContent').innerHTML = `
+            <form id="listForm" onsubmit="saveList(event, '${id || ''}')">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Name *</label>
+                  <input type="text" name="name" required>
+                </div>
+                <div class="form-group">
+                  <label>Slug</label>
+                  <input type="text" name="slug" placeholder="auto-generated">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Description</label>
+                <textarea name="description"></textarea>
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>From Name *</label>
+                  <input type="text" name="from_name" value="Untitled Publishers" required>
+                </div>
+                <div class="form-group">
+                  <label>From Email *</label>
+                  <input type="email" name="from_email" value="no-reply@untitledpublishers.com" required>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+              </div>
+            </form>
+          `;
+          break;
+          
+        case 'template':
+          document.getElementById('modalTitle').textContent = id ? 'Edit Template' : 'New Template';
+          document.getElementById('modalContent').innerHTML = `
+            <form id="templateForm" onsubmit="saveTemplate(event, '${id || ''}')">
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Name *</label>
+                  <input type="text" name="name" required>
+                </div>
+                <div class="form-group">
+                  <label>Category</label>
+                  <input type="text" name="category" placeholder="e.g. welcome, newsletter">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Subject</label>
+                <input type="text" name="subject">
+              </div>
+              <div class="form-group">
+                <label>Body HTML *</label>
+                <textarea name="body_html" required placeholder="<h1>Hello {first_name}!</h1>"></textarea>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+              </div>
+            </form>
+          `;
+          break;
+          
+        case 'campaign':
+          document.getElementById('modalTitle').textContent = id ? 'Edit Campaign' : 'New Campaign';
+          document.getElementById('modalContent').innerHTML = `
+            <form id="campaignForm" onsubmit="saveCampaign(event, '${id || ''}')">
+              <div class="form-group">
+                <label>List</label>
+                <select name="list_id">
+                  <option value="">All Subscribers</option>
+                  ${currentLists.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Subject *</label>
+                <input type="text" name="subject" required>
+              </div>
+              <div class="form-group">
+                <label>Body HTML *</label>
+                <textarea name="body_html" required></textarea>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save as Draft</button>
+              </div>
+            </form>
+          `;
+          break;
+          
+        case 'sequence':
+          document.getElementById('modalTitle').textContent = id ? 'Edit Sequence' : 'New Sequence';
+          document.getElementById('modalContent').innerHTML = `
+            <form id="sequenceForm" onsubmit="saveSequence(event, '${id || ''}')">
+              <div class="form-group">
+                <label>Name *</label>
+                <input type="text" name="name" required>
+              </div>
+              <div class="form-group">
+                <label>List *</label>
+                <select name="list_id" required>
+                  <option value="">Select List</option>
+                  ${currentLists.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Description</label>
+                <textarea name="description"></textarea>
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Save</button>
+              </div>
+            </form>
+          `;
+          break;
+          
+        case 'subscriber':
+          document.getElementById('modalTitle').textContent = 'Add Subscriber';
+          document.getElementById('modalContent').innerHTML = `
+            <form id="subscriberForm" onsubmit="saveSubscriber(event)">
+              <div class="form-group">
+                <label>List *</label>
+                <select name="list_id" required>
+                  <option value="">Select List</option>
+                  ${currentLists.map(l => `<option value="${l.id}">${l.name}</option>`).join('')}
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Email *</label>
+                <input type="email" name="email" required>
+              </div>
+              <div class="form-group">
+                <label>Name</label>
+                <input type="text" name="name">
+              </div>
+              <div class="modal-footer">
+                <button type="button" class="btn" onclick="closeModal()">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add</button>
+              </div>
+            </form>
+          `;
+          break;
+      }
+    }
+    
+    function closeModal() {
+      document.getElementById('modalOverlay').classList.remove('active');
+    }
+    
+    // Save Functions
+    async function saveList(e, id) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        name: form.name.value,
+        slug: form.slug.value || undefined,
+        description: form.description.value || undefined,
+        from_name: form.from_name.value,
+        from_email: form.from_email.value
+      };
+      
+      const endpoint = id ? `/api/lists/${id}` : '/api/lists';
+      const method = id ? 'PUT' : 'POST';
+      
+      const res = await api(endpoint, method, data);
+      if (res.success) {
+        showToast('List saved!');
+        closeModal();
+        loadLists();
+      } else {
+        showToast(res.error || 'Failed to save', 'error');
+      }
+    }
+    
+    async function saveTemplate(e, id) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        name: form.name.value,
+        category: form.category.value || undefined,
+        subject: form.subject.value || undefined,
+        body_html: form.body_html.value
+      };
+      
+      const endpoint = id ? `/api/templates/${id}` : '/api/templates';
+      const method = id ? 'PUT' : 'POST';
+      
+      const res = await api(endpoint, method, data);
+      if (res.success) {
+        showToast('Template saved!');
+        closeModal();
+        loadTemplates();
+      } else {
+        showToast(res.error || 'Failed to save', 'error');
+      }
+    }
+    
+    async function saveCampaign(e, id) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        list_id: form.list_id.value || undefined,
+        subject: form.subject.value,
+        body_html: form.body_html.value
+      };
+      
+      const endpoint = id ? `/api/emails/${id}` : '/api/emails';
+      const method = id ? 'PUT' : 'POST';
+      
+      const res = await api(endpoint, method, data);
+      if (res.success) {
+        showToast('Campaign saved!');
+        closeModal();
+        loadCampaigns();
+      } else {
+        showToast(res.error || 'Failed to save', 'error');
+      }
+    }
+    
+    async function saveSequence(e, id) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        name: form.name.value,
+        list_id: form.list_id.value,
+        description: form.description.value || undefined
+      };
+      
+      const endpoint = id ? `/api/sequences/${id}` : '/api/sequences';
+      const method = id ? 'PUT' : 'POST';
+      
+      const res = await api(endpoint, method, data);
+      if (res.success) {
+        showToast('Sequence saved!');
+        closeModal();
+        loadSequences();
+      } else {
+        showToast(res.error || 'Failed to save', 'error');
+      }
+    }
+    
+    async function saveSubscriber(e) {
+      e.preventDefault();
+      const form = e.target;
+      const listId = form.list_id.value;
+      const data = {
+        email: form.email.value,
+        name: form.name.value || undefined
+      };
+      
+      const res = await api(`/api/lists/${listId}/subscribers`, 'POST', data);
+      if (res.success) {
+        showToast('Subscriber added!');
+        closeModal();
+        loadSubscribers();
+      } else {
+        showToast(res.error || 'Failed to add', 'error');
+      }
+    }
+    
+    // Action Functions
+    async function editList(id) {
+      const data = await api(`/api/lists/${id}`);
+      openModal('list', id);
+      const form = document.getElementById('listForm');
+      form.name.value = data.list.name;
+      form.slug.value = data.list.slug;
+      form.description.value = data.list.description || '';
+      form.from_name.value = data.list.from_name;
+      form.from_email.value = data.list.from_email;
+    }
+    
+    async function archiveList(id) {
+      if (!confirm('Archive this list?')) return;
+      const res = await api(`/api/lists/${id}`, 'DELETE');
+      if (res.success) {
+        showToast('List archived');
+        loadLists();
+      }
+    }
+    
+    async function editTemplate(id) {
+      const data = await api(`/api/templates/${id}`);
+      openModal('template', id);
+      const form = document.getElementById('templateForm');
+      form.name.value = data.template.name;
+      form.category.value = data.template.category || '';
+      form.subject.value = data.template.subject || '';
+      form.body_html.value = data.template.body_html;
+    }
+    
+    async function duplicateTemplate(id) {
+      const res = await api(`/api/templates/${id}/duplicate`, 'POST');
+      if (res.success) {
+        showToast('Template duplicated');
+        loadTemplates();
+      }
+    }
+    
+    async function deleteTemplate(id) {
+      if (!confirm('Delete this template?')) return;
+      const res = await api(`/api/templates/${id}`, 'DELETE');
+      if (res.success) {
+        showToast('Template deleted');
+        loadTemplates();
+      }
+    }
+    
+    async function editCampaign(id) {
+      const data = await api(`/api/emails/${id}`);
+      openModal('campaign', id);
+      const form = document.getElementById('campaignForm');
+      form.list_id.value = data.email.list_id || '';
+      form.subject.value = data.email.subject;
+      form.body_html.value = data.email.body_html;
+    }
+    
+    async function sendCampaign(id) {
+      const preview = await api(`/api/emails/${id}/preview`);
+      if (!confirm(`Send to ${preview.recipient_count} subscribers?`)) return;
+      
+      const res = await api(`/api/emails/${id}/send`, 'POST');
+      if (res.success) {
+        showToast(`Sent to ${res.sent} subscribers!`);
+        loadCampaigns();
+      } else {
+        showToast(res.error || 'Failed to send', 'error');
+      }
+    }
+    
+    async function editSequence(id) {
+      const data = await api(`/api/sequences/${id}`);
+      openModal('sequence', id);
+      const form = document.getElementById('sequenceForm');
+      form.name.value = data.sequence.name;
+      form.list_id.value = data.sequence.list_id;
+      form.description.value = data.sequence.description || '';
+    }
+    
+    async function viewSequenceSteps(id) {
+      const data = await api(`/api/sequences/${id}`);
+      document.getElementById('modalTitle').textContent = `Steps: ${data.sequence.name}`;
+      
+      let stepsHtml = data.steps.length 
+        ? data.steps.map((s, i) => `
+            <div style="margin-bottom: 12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px;">
+              <strong>Step ${i + 1}</strong> (${s.delay_minutes} min delay)<br>
+              <span style="color: var(--copper-light);">${s.subject}</span>
+            </div>
+          `).join('')
+        : '<p class="empty-state">No steps yet</p>';
+      
+      document.getElementById('modalContent').innerHTML = `
+        ${stepsHtml}
+        <div class="modal-footer">
+          <button class="btn" onclick="closeModal()">Close</button>
+          <button class="btn btn-primary" onclick="addSequenceStep('${id}')">+ Add Step</button>
+        </div>
+      `;
+      document.getElementById('modalOverlay').classList.add('active');
+    }
+    
+    async function addSequenceStep(sequenceId) {
+      document.getElementById('modalTitle').textContent = 'Add Step';
+      document.getElementById('modalContent').innerHTML = `
+        <form onsubmit="saveSequenceStep(event, '${sequenceId}')">
+          <div class="form-group">
+            <label>Delay (minutes)</label>
+            <input type="number" name="delay_minutes" value="0" min="0">
+          </div>
+          <div class="form-group">
+            <label>Subject *</label>
+            <input type="text" name="subject" required>
+          </div>
+          <div class="form-group">
+            <label>Body HTML *</label>
+            <textarea name="body_html" required></textarea>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn" onclick="viewSequenceSteps('${sequenceId}')">Back</button>
+            <button type="submit" class="btn btn-primary">Add Step</button>
+          </div>
+        </form>
+      `;
+    }
+    
+    async function saveSequenceStep(e, sequenceId) {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        delay_minutes: parseInt(form.delay_minutes.value) || 0,
+        subject: form.subject.value,
+        body_html: form.body_html.value
+      };
+      
+      const res = await api(`/api/sequences/${sequenceId}/steps`, 'POST', data);
+      if (res.success) {
+        showToast('Step added!');
+        viewSequenceSteps(sequenceId);
+        loadSequences();
+      } else {
+        showToast(res.error || 'Failed to add step', 'error');
+      }
+    }
+    
+    async function viewSubscriber(id) {
+      const data = await api(`/api/subscribers/${id}`);
+      document.getElementById('modalTitle').textContent = data.subscriber.email;
+      document.getElementById('modalContent').innerHTML = `
+        <p><strong>Name:</strong> ${data.subscriber.name || '-'}</p>
+        <p><strong>Source:</strong> ${data.subscriber.source || '-'}</p>
+        <p><strong>Segment:</strong> ${data.subscriber.segment || '-'}</p>
+        <p><strong>Created:</strong> ${formatDate(data.subscriber.created_at)}</p>
+        <hr style="margin: 16px 0; border-color: var(--glass-border);">
+        <h4 style="color: var(--copper-light); margin-bottom: 12px;">Subscriptions</h4>
+        ${data.subscriptions?.length 
+          ? data.subscriptions.map(s => `<p>${s.list_name} - ${s.status}</p>`).join('')
+          : '<p>No subscriptions</p>'}
+        <div class="modal-footer">
+          <button class="btn" onclick="closeModal()">Close</button>
+        </div>
+      `;
+      document.getElementById('modalOverlay').classList.add('active');
+    }
+    
+    // Helpers
+    function formatDate(dateStr) {
+      if (!dateStr) return '-';
+      return new Date(dateStr).toLocaleDateString();
+    }
+    
+    // Close modal on overlay click
+    document.getElementById('modalOverlay').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) closeModal();
+    });
+  </script>
+</body>
+</html>

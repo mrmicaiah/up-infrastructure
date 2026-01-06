@@ -194,8 +194,38 @@ export function registerCourierTools(ctx: ToolContext) {
         const statusIcon = e.status === 'sent' ? '✅' : e.status === 'scheduled' ? '⏰' : '📝';
         out += `${statusIcon} **${e.subject}**\n`;
         out += `   Status: ${e.status}${e.sent_count ? ` (sent to ${e.sent_count})` : ''}${e.scheduled_at ? `\n   Scheduled: ${e.scheduled_at}` : ''}\n`;
+        out += `   List: ${e.list_name || '(all subscribers)'}\n`;
         out += `   ID: ${e.id}\n\n`;
       }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_get_campaign", {
+    campaign_id: z.string().describe("Campaign ID"),
+  }, async ({ campaign_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}`);
+      const e = result.email;
+      
+      const statusIcon = e.status === 'sent' ? '✅' : e.status === 'scheduled' ? '⏰' : '📝';
+      
+      let out = `${statusIcon} **${e.subject}**\n\n`;
+      out += `**ID:** ${e.id}\n`;
+      out += `**Status:** ${e.status}\n`;
+      out += `**List:** ${e.list_name || '(all subscribers)'}\n`;
+      out += `**From:** ${e.from_name || 'Default'} <${e.from_email || 'default'}>\n`;
+      if (e.preview_text) out += `**Preview:** ${e.preview_text}\n`;
+      if (e.scheduled_at) out += `**Scheduled:** ${e.scheduled_at}\n`;
+      if (e.sent_at) out += `**Sent:** ${e.sent_at}\n`;
+      if (e.sent_count) out += `**Sent to:** ${e.sent_count} subscribers\n`;
+      out += `**Created:** ${e.created_at}\n`;
+      out += `**Updated:** ${e.updated_at}\n`;
+      
+      out += `\n---\n\n**Content Preview:**\n\`\`\`html\n${e.body_html?.slice(0, 1000)}${e.body_html?.length > 1000 ? '\n...(truncated)' : ''}\n\`\`\``;
       
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
@@ -225,9 +255,97 @@ export function registerCourierTools(ctx: ToolContext) {
     }
   });
 
+  server.tool("courier_update_campaign", {
+    campaign_id: z.string().describe("Campaign ID to update"),
+    subject: z.string().optional().describe("New subject line"),
+    body_html: z.string().optional().describe("New HTML content"),
+    list_id: z.string().optional().describe("New target list ID"),
+    title: z.string().optional().describe("New internal title"),
+    preview_text: z.string().optional().describe("New preview text"),
+  }, async ({ campaign_id, subject, body_html, list_id, title, preview_text }) => {
+    try {
+      const updates: any = {};
+      if (subject !== undefined) updates.subject = subject;
+      if (body_html !== undefined) updates.body_html = body_html;
+      if (list_id !== undefined) updates.list_id = list_id;
+      if (title !== undefined) updates.title = title;
+      if (preview_text !== undefined) updates.preview_text = preview_text;
+      
+      await courierRequest(env, `/api/emails/${campaign_id}`, 'PUT', updates);
+      
+      return { content: [{ type: "text", text: `✅ Campaign updated` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_preview_campaign", {
+    campaign_id: z.string().describe("Campaign ID to preview"),
+  }, async ({ campaign_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}/preview`);
+      const e = result.email;
+      
+      let out = `📬 **Campaign Preview**\n\n`;
+      out += `**Subject:** ${e.subject}\n`;
+      out += `**List:** ${e.list_name || '(all subscribers)'}\n`;
+      out += `**From:** ${e.from_name || 'Default'} <${e.from_email || 'default'}>\n`;
+      out += `\n**Recipients:** ${result.recipient_count} subscriber${result.recipient_count !== 1 ? 's' : ''}\n`;
+      
+      if (result.recipient_count === 0) {
+        out += `\n⚠️ No subscribers will receive this email! Check the list assignment.`;
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_campaign_stats", {
+    campaign_id: z.string().describe("Campaign ID to get stats for"),
+  }, async ({ campaign_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}/stats`);
+      const e = result.email;
+      const s = result.stats;
+      
+      let out = `📊 **Campaign Stats: ${e.subject}**\n\n`;
+      out += `**Status:** ${e.status}\n`;
+      if (e.sent_at) out += `**Sent:** ${e.sent_at}\n`;
+      out += `\n`;
+      out += `**Sent:** ${s.sent}\n`;
+      out += `**Opened:** ${s.opened} (${s.open_rate}%)\n`;
+      out += `**Clicked:** ${s.clicked} (${s.click_rate}%)\n`;
+      
+      if (result.top_links?.length) {
+        out += `\n**Top Links:**\n`;
+        for (const link of result.top_links) {
+          out += `• ${link.url} — ${link.count} clicks\n`;
+        }
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_duplicate_campaign", {
+    campaign_id: z.string().describe("Campaign ID to duplicate"),
+  }, async ({ campaign_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}/duplicate`, 'POST');
+      
+      return { content: [{ type: "text", text: `✅ Campaign duplicated\nNew ID: ${result.id}` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
   server.tool("courier_schedule_campaign", {
     campaign_id: z.string().describe("Campaign ID to schedule"),
-    scheduled_at: z.string().describe("When to send (ISO 8601 format, e.g., '2026-01-13T09:00:00Z')"),
+    scheduled_at: z.string().describe("When to send (ISO 8601 format, e.g., '2026-01-13T09:00:00Z' or '2026-01-13T09:00:00-05:00' for EST)"),
   }, async ({ campaign_id, scheduled_at }) => {
     try {
       const result: any = await courierRequest(env, `/api/emails/${campaign_id}/schedule`, 'POST', {

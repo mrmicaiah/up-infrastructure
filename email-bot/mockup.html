@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design Mockup - Clean Blue</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    
+    :root {
+      --blue-600: #2563eb;
+      --blue-500: #3b82f6;
+      --blue-400: #60a5fa;
+      --blue-100: #dbeafe;
+      --blue-50: #eff6ff;
+      --gray-900: #111827;
+      --gray-700: #374151;
+      --gray-500: #6b7280;
+      --gray-300: #d1d5db;
+      --gray-200: #e5e7eb;
+      --gray-100: #f3f4f6;
+      --gray-50: #f9fafb;
+      --white: #ffffff;
+      --green-500: #22c55e;
+      --green-100: #dcfce7;
+      --red-500: #ef4444;
+      --red-100: #fee2e2;
+      --yellow-500: #eab308;
+      --yellow-100: #fef9c3;
+    }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-50);
+      color: var(--gray-900);
+      line-height: 1.5;
+    }
+    
+    /* Header */
+    header {
+      background: var(--white);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 600;
+      font-size: 1.1rem;
+      color: var(--gray-900);
+    }
+    
+    .logo-icon {
+      width: 32px;
+      height: 32px;
+      background: var(--blue-500);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+    }
+    
+    .header-stats {
+      display: flex;
+      gap: 24px;
+      font-size: 0.9rem;
+      color: var(--gray-500);
+    }
+    
+    .header-stats strong {
+      color: var(--gray-900);
+    }
+    
+    /* Tabs */
+    .tabs {
+      background: var(--white);
+      border-bottom: 1px solid var(--gray-200);
+      display: flex;
+      padding: 0 24px;
+      gap: 4px;
+    }
+    
+    .tab {
+      padding: 14px 20px;
+      border: none;
+      background: none;
+      color: var(--gray-500);
+      font-size: 0.9rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+    
+    .tab:hover {
+      color: var(--gray-700);
+    }
+    
+    .tab.active {
+      color: var(--blue-600);
+      border-bottom-color: var(--blue-600);
+    }
+    
+    /* Content */
+    .content {
+      padding: 24px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    .stat-card {
+      background: var(--white);
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    
+    .stat-card .label {
+      font-size: 0.85rem;
+      color: var(--gray-500);
+      margin-bottom: 4px;
+    }
+    
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 600;
+      color: var(--gray-900);
+    }
+    
+    .stat-card .change {
+      font-size: 0.8rem;
+      color: var(--green-500);
+      margin-top: 4px;
+    }
+    
+    /* Card */
+    .card {
+      background: var(--white);
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
+      margin-bottom: 20px;
+    }
+    
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--gray-200);
+    }
+    
+    .card-header h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--gray-900);
+    }
+    
+    .card-body {
+      padding: 0;
+    }
+    
+    /* Buttons */
+    .btn {
+      padding: 8px 16px;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 1px solid var(--gray-300);
+      background: var(--white);
+      color: var(--gray-700);
+    }
+    
+    .btn:hover {
+      background: var(--gray-50);
+      border-color: var(--gray-400);
+    }
+    
+    .btn-primary {
+      background: var(--blue-500);
+      border-color: var(--blue-500);
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: var(--blue-600);
+      border-color: var(--blue-600);
+    }
+    
+    .btn-sm {
+      padding: 6px 12px;
+      font-size: 0.8rem;
+    }
+    
+    .btn-danger {
+      color: var(--red-500);
+      border-color: var(--red-500);
+    }
+    
+    .btn-danger:hover {
+      background: var(--red-500);
+      color: white;
+    }
+    
+    /* Table */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    th {
+      text-align: left;
+      padding: 12px 20px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--gray-500);
+      background: var(--gray-50);
+      border-bottom: 1px solid var(--gray-200);
+    }
+    
+    td {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--gray-100);
+      color: var(--gray-700);
+    }
+    
+    tr:hover {
+      background: var(--gray-50);
+    }
+    
+    tr:last-child td {
+      border-bottom: none;
+    }
+    
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    
+    .badge-active {
+      background: var(--green-100);
+      color: var(--green-500);
+    }
+    
+    .badge-draft {
+      background: var(--yellow-100);
+      color: var(--yellow-500);
+    }
+    
+    .badge-sent {
+      background: var(--blue-100);
+      color: var(--blue-500);
+    }
+    
+    /* Actions */
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+    
+    /* Form */
+    .form-group {
+      margin-bottom: 16px;
+    }
+    
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--gray-700);
+    }
+    
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--gray-300);
+      border-radius: 6px;
+      font-size: 0.9rem;
+      color: var(--gray-900);
+      background: var(--white);
+    }
+    
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--blue-500);
+      box-shadow: 0 0 0 3px var(--blue-100);
+    }
+    
+    /* Modal */
+    .modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    
+    .modal {
+      background: var(--white);
+      border-radius: 12px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+    
+    .modal-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--gray-200);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .modal-header h3 {
+      font-size: 1.1rem;
+      font-weight: 600;
+    }
+    
+    .modal-body {
+      padding: 20px;
+    }
+    
+    .modal-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--gray-200);
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      background: var(--gray-50);
+      border-radius: 0 0 12px 12px;
+    }
+    
+    /* Empty state */
+    .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--gray-500);
+    }
+    
+    /* Login */
+    .login-container {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, var(--blue-50) 0%, var(--white) 100%);
+    }
+    
+    .login-box {
+      background: var(--white);
+      border: 1px solid var(--gray-200);
+      border-radius: 16px;
+      padding: 40px;
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+    }
+    
+    .login-box h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+      color: var(--gray-900);
+    }
+    
+    .login-box p {
+      color: var(--gray-500);
+      margin-bottom: 32px;
+    }
+    
+    .pin-input {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      margin-bottom: 24px;
+    }
+    
+    .pin-input input {
+      width: 56px;
+      height: 64px;
+      text-align: center;
+      font-size: 1.5rem;
+      font-weight: 600;
+      border: 2px solid var(--gray-200);
+      border-radius: 10px;
+      color: var(--gray-900);
+    }
+    
+    .pin-input input:focus {
+      outline: none;
+      border-color: var(--blue-500);
+      box-shadow: 0 0 0 3px var(--blue-100);
+    }
+  </style>
+</head>
+<body>
+  <!-- Login Example -->
+  <div class="login-container" id="loginDemo">
+    <div class="login-box">
+      <div class="logo-icon" style="width: 48px; height: 48px; margin: 0 auto 16px; font-size: 1.2rem;">📧</div>
+      <h1>Email Platform</h1>
+      <p>Enter your PIN to continue</p>
+      <div class="pin-input">
+        <input type="text" maxlength="1" value="1">
+        <input type="text" maxlength="1" value="9">
+        <input type="text" maxlength="1" value="8">
+        <input type="text" maxlength="1" value="">
+      </div>
+      <button class="btn btn-primary" style="width: 100%;" onclick="showDashboard()">Continue</button>
+    </div>
+  </div>
+
+  <!-- Dashboard Example -->
+  <div id="dashboardDemo" style="display: none;">
+    <header>
+      <div class="logo">
+        <div class="logo-icon">📧</div>
+        Email Platform
+      </div>
+      <div class="header-stats">
+        <span>Lists: <strong>3</strong></span>
+        <span>Subscribers: <strong>1,247</strong></span>
+        <span>Sent: <strong>12</strong></span>
+      </div>
+    </header>
+    
+    <div class="tabs">
+      <button class="tab active">📊 Stats</button>
+      <button class="tab">📋 Lists</button>
+      <button class="tab">👥 Subscribers</button>
+      <button class="tab">🔄 Sequences</button>
+      <button class="tab">📝 Templates</button>
+      <button class="tab">✉️ Campaigns</button>
+    </div>
+    
+    <div class="content">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="label">Total Subscribers</div>
+          <div class="value">1,247</div>
+          <div class="change">↑ 12% this week</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Active Lists</div>
+          <div class="value">3</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Campaigns Sent</div>
+          <div class="value">12</div>
+        </div>
+        <div class="stat-card">
+          <div class="label">Avg Open Rate</div>
+          <div class="value">42%</div>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="card-header">
+          <h2>Email Lists</h2>
+          <button class="btn btn-primary">+ New List</button>
+        </div>
+        <div class="card-body">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Slug</th>
+                <th>Subscribers</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>Untitled Publishers</strong></td>
+                <td style="color: var(--gray-500);"><code>untitled-publishers</code></td>
+                <td>842</td>
+                <td><span class="badge badge-active">Active</span></td>
+                <td class="actions">
+                  <button class="btn btn-sm">Edit</button>
+                  <button class="btn btn-sm">View</button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Proverbs Library</strong></td>
+                <td style="color: var(--gray-500);"><code>proverbs-library</code></td>
+                <td>312</td>
+                <td><span class="badge badge-active">Active</span></td>
+                <td class="actions">
+                  <button class="btn btn-sm">Edit</button>
+                  <button class="btn btn-sm">View</button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Hot Mess Newsletter</strong></td>
+                <td style="color: var(--gray-500);"><code>hot-mess</code></td>
+                <td>93</td>
+                <td><span class="badge badge-draft">Draft</span></td>
+                <td class="actions">
+                  <button class="btn btn-sm">Edit</button>
+                  <button class="btn btn-sm">View</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      
+      <!-- Modal Example -->
+      <div class="modal-overlay">
+        <div class="modal">
+          <div class="modal-header">
+            <h3>New Email List</h3>
+            <button style="background: none; border: none; font-size: 1.5rem; cursor: pointer; color: var(--gray-400);">&times;</button>
+          </div>
+          <div class="modal-body">
+            <div class="form-group">
+              <label>List Name</label>
+              <input type="text" placeholder="e.g. Weekly Newsletter">
+            </div>
+            <div class="form-group">
+              <label>From Email</label>
+              <input type="email" value="hello@untitledpublishers.com">
+            </div>
+            <div class="form-group">
+              <label>Description</label>
+              <textarea rows="3" placeholder="What's this list for?"></textarea>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn">Cancel</button>
+            <button class="btn btn-primary">Create List</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function showDashboard() {
+      document.getElementById('loginDemo').style.display = 'none';
+      document.getElementById('dashboardDemo').style.display = 'block';
+    }
+  </script>
+</body>
+</html>

@@ -2,8 +2,66 @@
  * Legacy handlers - backward compatible endpoints
  */
 
-import { generateId, jsonResponse, isValidEmail, isDisposableEmail, sanitizeString } from './lib.js';
+import { generateId, jsonResponse, isValidEmail, isDisposableEmail, sanitizeString, sendEmailViaSES } from './lib.js';
 import { enrollInSequence } from './handlers-sequences.js';
+
+// Send lead notification email to list owner
+async function sendLeadNotification(env, list, lead, subscription) {
+  if (!list.notify_email) return;
+  
+  try {
+    const subject = `🎉 New subscriber: ${lead.email}`;
+    
+    const metadata = lead.metadata ? JSON.parse(lead.metadata) : {};
+    const metadataRows = Object.entries(metadata)
+      .map(([k, v]) => `<tr><td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">${k}</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${v}</td></tr>`)
+      .join('');
+    
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>New Subscriber</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background: #f5f5f5;">
+  <div style="background: white; border-radius: 8px; padding: 30px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+    <h2 style="margin-top: 0; color: #333;">New subscriber to ${list.name}</h2>
+    
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #eee; color: #666; width: 120px;">Email</td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>${lead.email}</strong></td>
+      </tr>
+      ${lead.name ? `<tr><td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Name</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${lead.name}</td></tr>` : ''}
+      ${subscription.source ? `<tr><td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Source</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${subscription.source}</td></tr>` : ''}
+      ${subscription.funnel ? `<tr><td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Funnel</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${subscription.funnel}</td></tr>` : ''}
+      ${lead.segment ? `<tr><td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Segment</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${lead.segment}</td></tr>` : ''}
+      ${lead.tags ? `<tr><td style="padding: 8px; border-bottom: 1px solid #eee; color: #666;">Tags</td><td style="padding: 8px; border-bottom: 1px solid #eee;">${JSON.parse(lead.tags).join(', ')}</td></tr>` : ''}
+      ${metadataRows}
+    </table>
+    
+    <p style="color: #666; font-size: 14px; margin-bottom: 0;">
+      Subscribed at ${new Date().toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+    </p>
+  </div>
+</body>
+</html>`;
+    
+    await sendEmailViaSES(
+      env,
+      list.notify_email,
+      subject,
+      html,
+      `New subscriber to ${list.name}: ${lead.email}`,
+      'Courier Notifications',
+      list.from_email
+    );
+  } catch (error) {
+    console.error('Failed to send lead notification:', error);
+    // Don't throw - notification failure shouldn't break subscription
+  }
+}
 
 export async function handleSubscribe(request, env) {
   try {
@@ -53,8 +111,8 @@ export async function handleSubscribe(request, env) {
     if (!lead) {
       isNewLead = true;
       const result = await env.DB.prepare(`
-        INSERT INTO leads (email, name, source, funnel, segment, tags, ip_country, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO leads (email, name, source, funnel, segment, tags, metadata, ip_country, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         email,
         sanitizeString(data.name, 100),
@@ -62,24 +120,43 @@ export async function handleSubscribe(request, env) {
         sanitizeString(data.funnel, 50),
         sanitizeString(data.segment, 50),
         Array.isArray(data.tags) ? JSON.stringify(data.tags.slice(0, 20).map(t => sanitizeString(t, 30))) : null,
+        data.metadata ? JSON.stringify(data.metadata) : null,
         request.cf?.country || null,
         now,
         now
       ).run();
       leadId = result.meta.last_row_id;
+      
+      // Fetch the newly created lead for notification
+      lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
     } else {
       leadId = lead.id;
       const existingTags = lead.tags ? JSON.parse(lead.tags) : [];
       const newTags = data.tags || [];
       const mergedTags = [...new Set([...existingTags, ...newTags])].slice(0, 50);
       
+      // Merge metadata
+      const existingMetadata = lead.metadata ? JSON.parse(lead.metadata) : {};
+      const newMetadata = data.metadata || {};
+      const mergedMetadata = { ...existingMetadata, ...newMetadata };
+      
       await env.DB.prepare(`
         UPDATE leads SET
           name = COALESCE(?, name),
           tags = ?,
+          metadata = ?,
           updated_at = ?
         WHERE id = ?
-      `).bind(data.name || null, JSON.stringify(mergedTags), now, leadId).run();
+      `).bind(
+        data.name || null, 
+        JSON.stringify(mergedTags), 
+        Object.keys(mergedMetadata).length > 0 ? JSON.stringify(mergedMetadata) : null,
+        now, 
+        leadId
+      ).run();
+      
+      // Refresh lead data for notification
+      lead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
     }
     
     const existingSub = await env.DB.prepare(
@@ -88,6 +165,7 @@ export async function handleSubscribe(request, env) {
     
     let subscriptionId;
     let isNew = false;
+    let subscription;
     
     if (existingSub) {
       subscriptionId = existingSub.id;
@@ -97,9 +175,14 @@ export async function handleSubscribe(request, env) {
         `).bind(now, existingSub.id).run();
         isNew = true;
       }
+      subscription = existingSub;
     } else {
       isNew = true;
       subscriptionId = generateId();
+      
+      const source = sanitizeString(data.source, 50) || data.list;
+      const funnel = sanitizeString(data.funnel, 50);
+      
       await env.DB.prepare(`
         INSERT INTO subscriptions (id, lead_id, list_id, status, source, funnel, subscribed_at, created_at)
         VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
@@ -107,14 +190,22 @@ export async function handleSubscribe(request, env) {
         subscriptionId,
         leadId,
         list.id,
-        sanitizeString(data.source, 50) || data.list,
-        sanitizeString(data.funnel, 50),
+        source,
+        funnel,
         now,
         now
       ).run();
       
+      subscription = { id: subscriptionId, source, funnel };
+      
+      // Enroll in welcome sequence if configured
       if (list.welcome_sequence_id) {
         await enrollInSequence(env, subscriptionId, list.welcome_sequence_id);
+      }
+      
+      // Send lead notification if configured
+      if (list.notify_email) {
+        await sendLeadNotification(env, list, lead, subscription);
       }
     }
     
@@ -230,13 +321,19 @@ export async function handleLeadCapture(request, env) {
       leadId = result.meta.last_row_id;
       await logTouch(env, leadId, lead.source, lead.funnel);
       
-      const defaultList = await env.DB.prepare('SELECT id FROM lists WHERE slug = ?').bind('untitled-publishers').first();
+      const defaultList = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind('untitled-publishers').first();
       if (defaultList) {
         const subId = generateId();
         await env.DB.prepare(`
           INSERT OR IGNORE INTO subscriptions (id, lead_id, list_id, status, source, funnel, subscribed_at, created_at)
           VALUES (?, ?, ?, 'active', ?, ?, ?, ?)
         `).bind(subId, leadId, defaultList.id, lead.source, lead.funnel, lead.created_at, lead.created_at).run();
+        
+        // Send notification for default list captures too
+        if (defaultList.notify_email) {
+          const fullLead = await env.DB.prepare('SELECT * FROM leads WHERE id = ?').bind(leadId).first();
+          await sendLeadNotification(env, defaultList, fullLead, { source: lead.source, funnel: lead.funnel });
+        }
       }
     }
 

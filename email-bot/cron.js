@@ -2,11 +2,15 @@
  * Cron handlers - scheduled tasks
  */
 
-import { generateId, sendEmailViaSES, renderEmail } from './lib.js';
+import { generateId, sendEmailViaSES, renderEmail, jsonResponse } from './lib.js';
 import { handleSendEmail } from './handlers-emails.js';
 
-export async function processSequenceEmails(env) {
+export async function processSequenceEmails(env, debug = false) {
+  const debugLog = [];
+  
   try {
+    debugLog.push(`Starting processSequenceEmails at ${new Date().toISOString()}`);
+    
     const due = await env.DB.prepare(`
       SELECT e.id as enrollment_id, e.sequence_id, e.current_step, e.subscription_id,
              ss.id as step_id, ss.subject, ss.preview_text, ss.body_html, ss.body_text, ss.delay_minutes,
@@ -25,12 +29,29 @@ export async function processSequenceEmails(env) {
       LIMIT 50
     `).all();
     
-    if (!due.results || due.results.length === 0) return;
+    debugLog.push(`Found ${due.results?.length || 0} enrollments due`);
+    
+    if (!due.results || due.results.length === 0) {
+      if (debug) {
+        // Also check what enrollments exist at all
+        const allEnrollments = await env.DB.prepare(`
+          SELECT e.*, datetime('now') as db_now
+          FROM sequence_enrollments e
+          WHERE e.status = 'active'
+          LIMIT 10
+        `).all();
+        debugLog.push(`Active enrollments: ${JSON.stringify(allEnrollments.results)}`);
+      }
+      return debug ? { success: true, log: debugLog, sent: 0 } : undefined;
+    }
     
     const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
+    let sentCount = 0;
     
     for (const enrollment of due.results) {
       try {
+        debugLog.push(`Processing: ${enrollment.email} - ${enrollment.subject}`);
+        
         const sendId = generateId();
         const subscriber = { email: enrollment.email, name: enrollment.name };
         const emailObj = {
@@ -45,6 +66,8 @@ export async function processSequenceEmails(env) {
         
         const renderedHtml = renderEmail(emailObj, subscriber, sendId, baseUrl, list);
         
+        debugLog.push(`Sending via SES from ${enrollment.from_email}...`);
+        
         await sendEmailViaSES(
           env,
           enrollment.email,
@@ -54,6 +77,8 @@ export async function processSequenceEmails(env) {
           enrollment.from_name,
           enrollment.from_email
         );
+        
+        debugLog.push(`SES send successful for ${enrollment.email}`);
         
         await env.DB.prepare(`
           INSERT INTO email_sends (id, email_id, lead_id, subscription_id, status, created_at)
@@ -72,19 +97,30 @@ export async function processSequenceEmails(env) {
             SET current_step = current_step + 1, next_send_at = ?
             WHERE id = ?
           `).bind(nextSendAt, enrollment.enrollment_id).run();
+          debugLog.push(`Advanced to step ${enrollment.current_step + 1}, next send at ${nextSendAt}`);
         } else {
           await env.DB.prepare(`
             UPDATE sequence_enrollments 
             SET status = 'completed', completed_at = datetime('now'), current_step = current_step + 1
             WHERE id = ?
           `).bind(enrollment.enrollment_id).run();
+          debugLog.push(`Completed sequence for ${enrollment.email}`);
         }
+        
+        sentCount++;
       } catch (error) {
+        debugLog.push(`ERROR for ${enrollment.email}: ${error.message}`);
         console.error('Sequence email failed:', enrollment.enrollment_id, error);
       }
     }
+    
+    debugLog.push(`Completed. Sent ${sentCount} emails.`);
+    return debug ? { success: true, log: debugLog, sent: sentCount } : undefined;
+    
   } catch (error) {
+    debugLog.push(`FATAL ERROR: ${error.message}`);
     console.error('Process sequence emails error:', error);
+    return debug ? { success: false, log: debugLog, error: error.message } : undefined;
   }
 }
 
@@ -108,4 +144,10 @@ export async function processScheduledCampaigns(env) {
   } catch (error) {
     console.error('Process scheduled campaigns error:', error);
   }
+}
+
+// Manual trigger endpoint handler
+export async function handleProcessSequences(request, env) {
+  const result = await processSequenceEmails(env, true);
+  return jsonResponse(result);
 }

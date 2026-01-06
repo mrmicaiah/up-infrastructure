@@ -38,6 +38,7 @@
       --purple-100: #f3e8ff;
       --orange-500: #f97316;
       --orange-100: #ffedd5;
+      --claude-orange: #da7756;
     }
     
     body {
@@ -229,6 +230,16 @@
     .header-btn:hover {
       background: var(--gray-50);
       border-color: var(--gray-400);
+    }
+    
+    .header-btn.claude {
+      border-color: var(--claude-orange);
+      color: var(--claude-orange);
+    }
+    
+    .header-btn.claude:hover {
+      background: var(--claude-orange);
+      color: white;
     }
     
     .header-btn.notify-on {
@@ -808,6 +819,7 @@
         </div>
       </div>
       <div class="header-actions">
+        <button class="header-btn claude" onclick="window.open('https://claude.ai', '_blank')" title="Claude AI">✨ Claude</button>
         <button class="header-btn" onclick="window.open('https://mrmicaiah.github.io/up-infrastructure/email-bot/dashboard.html', '_blank')" title="Courier">📧</button>
         <button class="header-btn" id="msgBtn" onclick="showMessages()" style="display:none;">💬 <span id="msgBadge" class="msg-badge">0</span></button>
         <button class="header-btn" id="notifyBtn" onclick="toggleNotifications()">🔔 Off</button>

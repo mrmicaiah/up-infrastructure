@@ -15,7 +15,7 @@ import { handleGetSequences, handleCreateSequence, handleGetSequence, handleUpda
 import { handleGetEmails, handleCreateEmail, handleGetEmail, handleUpdateEmail, handleDeleteEmail, handleDuplicateEmail, handlePreviewEmail, handleScheduleEmail, handleCancelSchedule, handleSendTestEmail, handleSendEmail, handleEmailStats } from './handlers-emails.js';
 import { handleGetTemplates, handleCreateTemplate, handleGetTemplate, handleUpdateTemplate, handleDeleteTemplate, handleDuplicateTemplate } from './handlers-templates.js';
 import { handleSubscribe, handleLeadCapture, handleGetLeads, handleExportLeads, handleStats } from './handlers-legacy.js';
-import { processSequenceEmails, processScheduledCampaigns } from './cron.js';
+import { processSequenceEmails, processScheduledCampaigns, handleProcessSequences } from './cron.js';
 
 export default {
   async fetch(request, env) {
@@ -68,6 +68,11 @@ export default {
       if (!authResult.ok) {
         return jsonResponse({ error: 'Unauthorized' }, 401);
       }
+    }
+    
+    // === MANUAL CRON TRIGGERS ===
+    if (url.pathname === '/api/process-sequences' && request.method === 'POST') {
+      return handleProcessSequences(request, env);
     }
     
     // === LISTS ===

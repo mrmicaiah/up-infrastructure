@@ -115,35 +115,41 @@ export async function handleUpdateList(id, request, env) {
       }
     }
     
-    // Handle notify_email - allow setting to null/empty to disable
-    let notifyEmail = undefined;
-    if (data.notify_email !== undefined) {
-      notifyEmail = data.notify_email || null;
-    }
+    // Build dynamic update - only include fields that were provided
+    // D1 cannot handle undefined values, so we use existing values as defaults
+    const name = data.name !== undefined ? data.name : list.name;
+    const slug = data.slug !== undefined ? data.slug : list.slug;
+    const description = data.description !== undefined ? data.description : list.description;
+    const from_name = data.from_name !== undefined ? data.from_name : list.from_name;
+    const from_email = data.from_email !== undefined ? data.from_email : list.from_email;
+    const reply_to = data.reply_to !== undefined ? data.reply_to : list.reply_to;
+    const notify_email = data.notify_email !== undefined ? (data.notify_email || null) : list.notify_email;
+    const double_optin = data.double_optin !== undefined ? (data.double_optin ? 1 : 0) : list.double_optin;
+    const welcome_sequence_id = data.welcome_sequence_id !== undefined ? data.welcome_sequence_id : list.welcome_sequence_id;
     
     await env.DB.prepare(`
       UPDATE lists SET
-        name = COALESCE(?, name),
-        slug = COALESCE(?, slug),
-        description = COALESCE(?, description),
-        from_name = COALESCE(?, from_name),
-        from_email = COALESCE(?, from_email),
-        reply_to = COALESCE(?, reply_to),
-        notify_email = COALESCE(?, notify_email),
-        double_optin = COALESCE(?, double_optin),
-        welcome_sequence_id = COALESCE(?, welcome_sequence_id),
+        name = ?,
+        slug = ?,
+        description = ?,
+        from_name = ?,
+        from_email = ?,
+        reply_to = ?,
+        notify_email = ?,
+        double_optin = ?,
+        welcome_sequence_id = ?,
         updated_at = ?
       WHERE id = ?
     `).bind(
-      data.name,
-      data.slug,
-      data.description,
-      data.from_name,
-      data.from_email,
-      data.reply_to,
-      notifyEmail,
-      data.double_optin !== undefined ? (data.double_optin ? 1 : 0) : null,
-      data.welcome_sequence_id,
+      name,
+      slug,
+      description,
+      from_name,
+      from_email,
+      reply_to,
+      notify_email,
+      double_optin,
+      welcome_sequence_id,
       new Date().toISOString(),
       id
     ).run();

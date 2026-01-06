@@ -7,5 +7,14 @@ binding = "DB"
 database_name = "email-bot-db"
 database_id = "1f723e35-3d79-4f80-92a0-b73b9569a310"
 
+# Cron triggers for automated email processing
+[triggers]
+crons = ["*/15 * * * *"]  # Every 15 minutes
+
 [vars]
 # Set secrets via: wrangler secret put ADMIN_API_KEY
+# Required secrets:
+# - ADMIN_API_KEY (for protected endpoints)
+# - AWS_ACCESS_KEY_ID (for SES)
+# - AWS_SECRET_ACCESS_KEY (for SES)
+# - AWS_REGION (optional, defaults to us-east-2)

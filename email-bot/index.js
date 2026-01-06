@@ -1,6 +1,6 @@
 /**
  * Untitled Publishers Email System API
- * Cloudflare Worker + D1 Database
+ * Cloudflare Worker + D1 Database + AWS SES
  */
 
 const CORS_HEADERS = {
@@ -18,6 +18,8 @@ const ALLOWED_ORIGINS = [
 ];
 
 const BEEHIIV_SOURCES = ['proverbs-library'];
+const FROM_EMAIL = 'hello@untitledpublishers.com';
+const FROM_NAME = 'Untitled Publishers';
 
 export default {
   async fetch(request, env) {
@@ -33,6 +35,9 @@ export default {
       return jsonResponse({
         hasApiKey: !!env.ADMIN_API_KEY,
         apiKeyLength: env.ADMIN_API_KEY ? env.ADMIN_API_KEY.length : 0,
+        hasAwsKey: !!env.AWS_ACCESS_KEY_ID,
+        hasAwsSecret: !!env.AWS_SECRET_ACCESS_KEY,
+        awsRegion: env.AWS_REGION || 'not set',
         authHeader: authHeader ? authHeader.substring(0, 20) + '...' : null,
         timestamp: new Date().toISOString()
       });
@@ -44,6 +49,17 @@ export default {
     }
     if (url.pathname === '/health') {
       return jsonResponse({ status: 'ok', timestamp: new Date().toISOString() });
+    }
+    
+    // Tracking endpoints (public)
+    if (url.pathname === '/t/open') {
+      return handleTrackOpen(request, env);
+    }
+    if (url.pathname === '/t/click') {
+      return handleTrackClick(request, env);
+    }
+    if (url.pathname === '/unsubscribe') {
+      return handlePublicUnsubscribe(request, env);
     }
 
     // Protected endpoints - require auth
@@ -113,6 +129,14 @@ export default {
       const id = url.pathname.split('/')[3];
       return handleCancelSchedule(id, env);
     }
+    if (url.pathname.match(/^\/api\/emails\/[a-zA-Z0-9-]+\/send$/) && request.method === 'POST') {
+      const id = url.pathname.split('/')[3];
+      return handleSendEmail(id, request, env);
+    }
+    if (url.pathname.match(/^\/api\/emails\/[a-zA-Z0-9-]+\/test$/) && request.method === 'POST') {
+      const id = url.pathname.split('/')[3];
+      return handleSendTestEmail(id, request, env);
+    }
     if (url.pathname.match(/^\/api\/emails\/[a-zA-Z0-9-]+\/stats$/) && request.method === 'GET') {
       const id = url.pathname.split('/')[3];
       return handleEmailStats(id, env);
@@ -172,6 +196,249 @@ function isDisposableEmail(email) {
 function sanitizeString(str, maxLength = 100) {
   if (!str || typeof str !== 'string') return null;
   return str.trim().slice(0, maxLength).replace(/[<>]/g, '');
+}
+
+// ==================== AWS SES ====================
+
+async function signAWSRequest(request, env) {
+  const region = env.AWS_REGION || 'us-east-2';
+  const service = 'ses';
+  const accessKeyId = env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
+  
+  const date = new Date();
+  const amzDate = date.toISOString().replace(/[:-]|\.\d{3}/g, '');
+  const dateStamp = amzDate.slice(0, 8);
+  
+  const url = new URL(request.url);
+  const canonicalUri = url.pathname;
+  const canonicalQuerystring = url.search.slice(1);
+  
+  const headers = new Headers(request.headers);
+  headers.set('host', url.host);
+  headers.set('x-amz-date', amzDate);
+  
+  const signedHeaders = 'content-type;host;x-amz-date';
+  const body = await request.clone().text();
+  const payloadHash = await sha256(body);
+  
+  const canonicalHeaders = `content-type:${headers.get('content-type')}\nhost:${url.host}\nx-amz-date:${amzDate}\n`;
+  
+  const canonicalRequest = [
+    request.method,
+    canonicalUri,
+    canonicalQuerystring,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash
+  ].join('\n');
+  
+  const algorithm = 'AWS4-HMAC-SHA256';
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const stringToSign = [
+    algorithm,
+    amzDate,
+    credentialScope,
+    await sha256(canonicalRequest)
+  ].join('\n');
+  
+  const signingKey = await getSignatureKey(secretAccessKey, dateStamp, region, service);
+  const signature = await hmacHex(signingKey, stringToSign);
+  
+  const authorizationHeader = `${algorithm} Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  
+  headers.set('Authorization', authorizationHeader);
+  
+  return new Request(request.url, {
+    method: request.method,
+    headers: headers,
+    body: body
+  });
+}
+
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmac(key, message) {
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw',
+    typeof key === 'string' ? new TextEncoder().encode(key) : key,
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
+  return new Uint8Array(sig);
+}
+
+async function hmacHex(key, message) {
+  const sig = await hmac(key, message);
+  return Array.from(sig).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function getSignatureKey(key, dateStamp, region, service) {
+  const kDate = await hmac('AWS4' + key, dateStamp);
+  const kRegion = await hmac(kDate, region);
+  const kService = await hmac(kRegion, service);
+  const kSigning = await hmac(kService, 'aws4_request');
+  return kSigning;
+}
+
+async function sendEmailViaSES(env, to, subject, htmlBody, textBody) {
+  const region = env.AWS_REGION || 'us-east-2';
+  const endpoint = `https://email.${region}.amazonaws.com/`;
+  
+  const params = new URLSearchParams();
+  params.append('Action', 'SendEmail');
+  params.append('Version', '2010-12-01');
+  params.append('Source', `${FROM_NAME} <${FROM_EMAIL}>`);
+  params.append('Destination.ToAddresses.member.1', to);
+  params.append('Message.Subject.Data', subject);
+  params.append('Message.Subject.Charset', 'UTF-8');
+  params.append('Message.Body.Html.Data', htmlBody);
+  params.append('Message.Body.Html.Charset', 'UTF-8');
+  if (textBody) {
+    params.append('Message.Body.Text.Data', textBody);
+    params.append('Message.Body.Text.Charset', 'UTF-8');
+  }
+  
+  const request = new Request(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: params.toString()
+  });
+  
+  const signedRequest = await signAWSRequest(request, env);
+  const response = await fetch(signedRequest);
+  const responseText = await response.text();
+  
+  if (!response.ok) {
+    console.error('SES Error:', responseText);
+    throw new Error(`SES Error: ${response.status} - ${responseText}`);
+  }
+  
+  // Extract MessageId from XML response
+  const messageIdMatch = responseText.match(/<MessageId>(.+?)<\/MessageId>/);
+  return messageIdMatch ? messageIdMatch[1] : null;
+}
+
+// ==================== EMAIL RENDERING ====================
+
+function renderEmail(email, subscriber, sendId, baseUrl) {
+  let html = email.body_html;
+  
+  // Merge tags
+  html = html.replace(/\{first_name\}/g, subscriber.name?.split(' ')[0] || 'Friend');
+  html = html.replace(/\{name\}/g, subscriber.name || 'Friend');
+  html = html.replace(/\{email\}/g, subscriber.email);
+  
+  // Wrap in template
+  const trackingPixel = `<img src="${baseUrl}/t/open?sid=${sendId}" width="1" height="1" style="display:none;" alt="">`;
+  const unsubscribeUrl = `${baseUrl}/unsubscribe?sid=${sendId}`;
+  
+  const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${email.subject}</title>
+</head>
+<body style="font-family: Georgia, serif; max-width: 600px; margin: 0 auto; padding: 20px; line-height: 1.6;">
+  ${html}
+  <hr style="margin-top: 40px; border: none; border-top: 1px solid #ddd;">
+  <p style="font-size: 12px; color: #666; text-align: center;">
+    You're receiving this because you signed up at Untitled Publishers.<br>
+    <a href="${unsubscribeUrl}" style="color: #666;">Unsubscribe</a>
+  </p>
+  ${trackingPixel}
+</body>
+</html>`;
+
+  return fullHtml;
+}
+
+// ==================== TRACKING ====================
+
+async function handleTrackOpen(request, env) {
+  const url = new URL(request.url);
+  const sendId = url.searchParams.get('sid');
+  
+  if (sendId) {
+    try {
+      await env.DB.prepare(
+        'UPDATE email_sends SET opened_at = COALESCE(opened_at, ?) WHERE id = ?'
+      ).bind(new Date().toISOString(), sendId).run();
+    } catch (e) {
+      console.error('Track open error:', e);
+    }
+  }
+  
+  // Return 1x1 transparent GIF
+  const gif = Uint8Array.from(atob('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7'), c => c.charCodeAt(0));
+  return new Response(gif, {
+    headers: { 'Content-Type': 'image/gif', 'Cache-Control': 'no-store' }
+  });
+}
+
+async function handleTrackClick(request, env) {
+  const url = new URL(request.url);
+  const sendId = url.searchParams.get('sid');
+  const targetUrl = url.searchParams.get('url');
+  
+  if (sendId && targetUrl) {
+    try {
+      await env.DB.prepare(
+        'UPDATE email_sends SET clicked_at = COALESCE(clicked_at, ?) WHERE id = ?'
+      ).bind(new Date().toISOString(), sendId).run();
+      
+      await env.DB.prepare(
+        'INSERT INTO email_clicks (id, send_id, url, clicked_at) VALUES (?, ?, ?, ?)'
+      ).bind(generateId(), sendId, targetUrl, new Date().toISOString()).run();
+    } catch (e) {
+      console.error('Track click error:', e);
+    }
+  }
+  
+  return Response.redirect(targetUrl || 'https://untitledpublishers.com', 302);
+}
+
+async function handlePublicUnsubscribe(request, env) {
+  const url = new URL(request.url);
+  const sendId = url.searchParams.get('sid');
+  
+  if (sendId) {
+    try {
+      // Get the lead_id from the send record
+      const send = await env.DB.prepare(
+        'SELECT lead_id FROM email_sends WHERE id = ?'
+      ).bind(sendId).first();
+      
+      if (send) {
+        await env.DB.prepare(
+          'UPDATE leads SET unsubscribed_at = ? WHERE id = ?'
+        ).bind(new Date().toISOString(), send.lead_id).run();
+      }
+    } catch (e) {
+      console.error('Unsubscribe error:', e);
+    }
+  }
+  
+  return new Response(`
+    <!DOCTYPE html>
+    <html>
+    <head><title>Unsubscribed</title></head>
+    <body style="font-family: sans-serif; text-align: center; padding: 50px;">
+      <h1>You've been unsubscribed</h1>
+      <p>You will no longer receive emails from Untitled Publishers.</p>
+      <p><a href="https://untitledpublishers.com">Return to website</a></p>
+    </body>
+    </html>
+  `, { headers: { 'Content-Type': 'text/html' } });
 }
 
 // ==================== BEEHIIV ====================
@@ -391,7 +658,7 @@ async function logTouch(env, leadId, source, funnel) {
   }
 }
 
-// ==================== LEADS (existing) ====================
+// ==================== LEADS ====================
 
 async function handleGetLeads(request, env) {
   const url = new URL(request.url);
@@ -479,7 +746,6 @@ async function handleStats(request, env) {
     "SELECT DATE(created_at) as date, COUNT(*) as count FROM leads WHERE created_at >= datetime('now', '-7 days') GROUP BY DATE(created_at) ORDER BY date DESC"
   ).all();
 
-  // Email stats
   const emailStats = await env.DB.prepare(
     'SELECT status, COUNT(*) as count FROM emails GROUP BY status'
   ).all();
@@ -786,6 +1052,113 @@ async function handleCancelSchedule(id, env) {
   `).bind(new Date().toISOString(), id).run();
 
   return jsonResponse({ success: true, message: 'Schedule cancelled' });
+}
+
+async function handleSendTestEmail(id, request, env) {
+  try {
+    const data = await request.json();
+    const testEmail = data.email;
+    
+    if (!testEmail || !isValidEmail(testEmail)) {
+      return jsonResponse({ error: 'Valid email required' }, 400);
+    }
+
+    const email = await env.DB.prepare('SELECT * FROM emails WHERE id = ?').bind(id).first();
+
+    if (!email) {
+      return jsonResponse({ error: 'Email not found' }, 404);
+    }
+
+    // Create a fake subscriber for rendering
+    const fakeSubscriber = { name: 'Test User', email: testEmail };
+    const fakeSendId = 'test-' + generateId();
+    const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
+    
+    const renderedHtml = renderEmail(email, fakeSubscriber, fakeSendId, baseUrl);
+    
+    const messageId = await sendEmailViaSES(env, testEmail, `[TEST] ${email.subject}`, renderedHtml, email.body_text);
+
+    return jsonResponse({ 
+      success: true, 
+      message: 'Test email sent',
+      to: testEmail,
+      ses_message_id: messageId
+    });
+  } catch (error) {
+    console.error('Send test email error:', error);
+    return jsonResponse({ error: 'Failed to send test email: ' + error.message }, 500);
+  }
+}
+
+async function handleSendEmail(id, request, env) {
+  try {
+    const email = await env.DB.prepare('SELECT * FROM emails WHERE id = ?').bind(id).first();
+
+    if (!email) {
+      return jsonResponse({ error: 'Email not found' }, 404);
+    }
+
+    if (email.status === 'sent') {
+      return jsonResponse({ error: 'Email already sent' }, 400);
+    }
+
+    // Get active subscribers
+    let subscriberQuery = 'SELECT id, email, name FROM leads WHERE unsubscribed_at IS NULL AND (bounce_count IS NULL OR bounce_count < 3)';
+    if (email.segment && email.segment !== 'all') {
+      subscriberQuery += ' AND segment = ?';
+    }
+
+    const subscribers = email.segment && email.segment !== 'all'
+      ? await env.DB.prepare(subscriberQuery).bind(email.segment).all()
+      : await env.DB.prepare(subscriberQuery).all();
+
+    if (!subscribers.results || subscribers.results.length === 0) {
+      return jsonResponse({ error: 'No active subscribers found' }, 400);
+    }
+
+    const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
+    let sent = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const subscriber of subscribers.results) {
+      try {
+        const sendId = generateId();
+        const renderedHtml = renderEmail(email, subscriber, sendId, baseUrl);
+        
+        const messageId = await sendEmailViaSES(env, subscriber.email, email.subject, renderedHtml, email.body_text);
+        
+        // Log the send
+        await env.DB.prepare(`
+          INSERT INTO email_sends (id, email_id, lead_id, ses_message_id, status, created_at)
+          VALUES (?, ?, ?, ?, 'sent', ?)
+        `).bind(sendId, id, subscriber.id, messageId, new Date().toISOString()).run();
+        
+        sent++;
+      } catch (e) {
+        failed++;
+        errors.push({ email: subscriber.email, error: e.message });
+        console.error(`Failed to send to ${subscriber.email}:`, e);
+      }
+    }
+
+    // Update email status
+    await env.DB.prepare(`
+      UPDATE emails SET status = 'sent', sent_at = ?, sent_count = ?, updated_at = ? WHERE id = ?
+    `).bind(new Date().toISOString(), sent, new Date().toISOString(), id).run();
+
+    return jsonResponse({ 
+      success: true, 
+      message: 'Email campaign sent',
+      sent,
+      failed,
+      total: subscribers.results.length,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined
+    });
+  } catch (error) {
+    console.error('Send email error:', error);
+    return jsonResponse({ error: 'Failed to send email: ' + error.message }, 500);
+  }
 }
 
 async function handleEmailStats(id, env) {

@@ -138,6 +138,7 @@ export function registerCourierTools(ctx: ToolContext) {
       let out = `📋 **Email Lists** (${result.lists.length})\n\n`;
       for (const l of result.lists) {
         out += `• **${l.name}**${l.status !== 'active' ? ` [${l.status}]` : ''}\n`;
+        out += `  Slug: ${l.slug}\n`;
         out += `  From: ${l.from_name} <${l.from_email}>\n`;
         out += `  ID: ${l.id}\n\n`;
       }
@@ -148,23 +149,88 @@ export function registerCourierTools(ctx: ToolContext) {
     }
   });
 
+  server.tool("courier_get_list", {
+    list_id: z.string().describe("List ID or slug"),
+  }, async ({ list_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/lists/${list_id}`);
+      const l = result.list;
+      
+      let out = `📋 **${l.name}**\n\n`;
+      out += `**ID:** ${l.id}\n`;
+      out += `**Slug:** ${l.slug}\n`;
+      out += `**Status:** ${l.status}\n`;
+      out += `**From:** ${l.from_name} <${l.from_email}>\n`;
+      if (l.reply_to) out += `**Reply-To:** ${l.reply_to}\n`;
+      if (l.description) out += `**Description:** ${l.description}\n`;
+      out += `**Created:** ${l.created_at}\n`;
+      out += `**Updated:** ${l.updated_at}\n`;
+      
+      if (l.welcome_sequence_id) {
+        out += `\n**Welcome Sequence:** ${l.welcome_sequence_id}`;
+      }
+      
+      // Get subscriber count
+      try {
+        const subs: any = await courierRequest(env, `/api/lists/${l.id}/subscribers?limit=1`);
+        out += `\n**Subscribers:** ${subs.total || subs.subscribers?.length || 0}`;
+      } catch (e) {
+        // ignore
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_update_list", {
+    list_id: z.string().describe("List ID"),
+    name: z.string().optional(),
+    slug: z.string().optional().describe("URL-safe identifier (e.g., 'micaiah-bussey')"),
+    from_name: z.string().optional(),
+    from_email: z.string().optional(),
+    reply_to: z.string().optional(),
+    description: z.string().optional(),
+    status: z.enum(['active', 'paused']).optional(),
+  }, async ({ list_id, name, slug, from_name, from_email, reply_to, description, status }) => {
+    try {
+      const updates: any = {};
+      if (name !== undefined) updates.name = name;
+      if (slug !== undefined) updates.slug = slug;
+      if (from_name !== undefined) updates.from_name = from_name;
+      if (from_email !== undefined) updates.from_email = from_email;
+      if (reply_to !== undefined) updates.reply_to = reply_to;
+      if (description !== undefined) updates.description = description;
+      if (status !== undefined) updates.status = status;
+      
+      await courierRequest(env, `/api/lists/${list_id}`, 'PUT', updates);
+      
+      return { content: [{ type: "text", text: `✅ List updated` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
   server.tool("courier_create_list", {
     name: z.string().describe("List name"),
     from_name: z.string().describe("Sender name"),
     from_email: z.string().describe("Sender email address"),
+    slug: z.string().optional().describe("URL-safe identifier (auto-generated if not provided)"),
     description: z.string().optional(),
     reply_to: z.string().optional(),
-  }, async ({ name, from_name, from_email, description, reply_to }) => {
+  }, async ({ name, from_name, from_email, slug, description, reply_to }) => {
     try {
       const result: any = await courierRequest(env, '/api/lists', 'POST', {
         name,
         from_name,
         from_email,
+        slug,
         description,
         reply_to,
       });
       
-      return { content: [{ type: "text", text: `✅ List created: **${name}**\nID: ${result.id}` }] };
+      return { content: [{ type: "text", text: `✅ List created: **${name}**\nID: ${result.id}\nSlug: ${result.slug || '(auto-generated)'}` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
     }

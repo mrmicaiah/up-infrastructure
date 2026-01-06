@@ -27,6 +27,17 @@ export default {
 
     const url = new URL(request.url);
     
+    // Debug endpoint
+    if (url.pathname === '/debug') {
+      const authHeader = request.headers.get('Authorization');
+      return jsonResponse({
+        hasApiKey: !!env.ADMIN_API_KEY,
+        apiKeyLength: env.ADMIN_API_KEY ? env.ADMIN_API_KEY.length : 0,
+        authHeader: authHeader ? authHeader.substring(0, 20) + '...' : null,
+        timestamp: new Date().toISOString()
+      });
+    }
+    
     // Public endpoints
     if (url.pathname === '/api/lead' && request.method === 'POST') {
       return handleLeadCapture(request, env);
@@ -488,7 +499,7 @@ async function handleStats(request, env) {
 async function handleGetSubscribers(request, env) {
   const url = new URL(request.url);
   const segment = url.searchParams.get('segment');
-  const status = url.searchParams.get('status'); // active, unsubscribed
+  const status = url.searchParams.get('status');
   const search = url.searchParams.get('search');
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 200);
   const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
@@ -506,7 +517,6 @@ async function handleGetSubscribers(request, env) {
 
   const results = await env.DB.prepare(query).bind(...params).all();
   
-  // Count active subscribers
   const activeCount = await env.DB.prepare(
     'SELECT COUNT(*) as count FROM leads WHERE unsubscribed_at IS NULL AND (bounce_count IS NULL OR bounce_count < 3)'
   ).first();
@@ -529,7 +539,6 @@ async function handleGetSubscriber(id, env) {
     return jsonResponse({ error: 'Subscriber not found' }, 404);
   }
 
-  // Get email history
   const emailHistory = await env.DB.prepare(`
     SELECT es.*, e.subject 
     FROM email_sends es 
@@ -561,7 +570,7 @@ async function handleUnsubscribe(id, env) {
 
 async function handleGetEmails(request, env) {
   const url = new URL(request.url);
-  const status = url.searchParams.get('status'); // draft, scheduled, sent
+  const status = url.searchParams.get('status');
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '50'), 100);
 
   let query = 'SELECT * FROM emails WHERE 1=1';
@@ -717,7 +726,6 @@ async function handlePreviewEmail(id, env) {
     return jsonResponse({ error: 'Email not found' }, 404);
   }
 
-  // Count recipients
   let recipientQuery = 'SELECT COUNT(*) as count FROM leads WHERE unsubscribed_at IS NULL AND (bounce_count IS NULL OR bounce_count < 3)';
   if (email.segment && email.segment !== 'all') {
     recipientQuery += ' AND segment = ?';

@@ -9,6 +9,9 @@ export interface Env {
   WORKER_NAME?: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  COURIER_API_KEY?: string;  // Email marketing platform API key
 }
 
 // Tool context passed to each tool registration function

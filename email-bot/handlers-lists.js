@@ -48,8 +48,8 @@ export async function handleCreateList(request, env) {
     }
     
     await env.DB.prepare(`
-      INSERT INTO lists (id, name, slug, description, from_name, from_email, reply_to, double_optin, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      INSERT INTO lists (id, name, slug, description, from_name, from_email, reply_to, notify_email, double_optin, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `).bind(
       id,
       data.name,
@@ -58,6 +58,7 @@ export async function handleCreateList(request, env) {
       data.from_name || data.name,
       data.from_email,
       data.reply_to || null,
+      data.notify_email || null,
       data.double_optin ? 1 : 0,
       now,
       now
@@ -114,6 +115,12 @@ export async function handleUpdateList(id, request, env) {
       }
     }
     
+    // Handle notify_email - allow setting to null/empty to disable
+    let notifyEmail = undefined;
+    if (data.notify_email !== undefined) {
+      notifyEmail = data.notify_email || null;
+    }
+    
     await env.DB.prepare(`
       UPDATE lists SET
         name = COALESCE(?, name),
@@ -122,6 +129,7 @@ export async function handleUpdateList(id, request, env) {
         from_name = COALESCE(?, from_name),
         from_email = COALESCE(?, from_email),
         reply_to = COALESCE(?, reply_to),
+        notify_email = COALESCE(?, notify_email),
         double_optin = COALESCE(?, double_optin),
         welcome_sequence_id = COALESCE(?, welcome_sequence_id),
         updated_at = ?
@@ -133,6 +141,7 @@ export async function handleUpdateList(id, request, env) {
       data.from_name,
       data.from_email,
       data.reply_to,
+      notifyEmail,
       data.double_optin !== undefined ? (data.double_optin ? 1 : 0) : null,
       data.welcome_sequence_id,
       new Date().toISOString(),

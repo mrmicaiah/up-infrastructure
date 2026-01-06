@@ -1,27 +1,23 @@
 # UP Infrastructure
 
-Backend services for Untitled Publishers.
+Backend infrastructure for Untitled Publishers. This repo is for **backend code only**.
 
-## Projects
+## ⚠️ IMPORTANT: Dashboard Locations
 
-| Folder | Description | Worker URL |
-|--------|-------------|------------|
-| `email-bot/` | Lead capture API | `email-bot-server.micaiah-tasks.workers.dev` |
-| `productivity-mcp/` | Productivity MCP server | `productivity-mcp-server.micaiah-tasks.workers.dev` |
+**Dashboards are NOT hosted here.** They live in the **UntitledPublishers** repo:
 
-## Deploy
+| Dashboard | Production URL | Repo Location |
+|-----------|---------------|---------------|
+| Helm (Productivity) | `untitledpublishers.com/dashboard/` | `UntitledPublishers/dashboard/index.html` |
+| Courier (Email) | `untitledpublishers.com/emailbot/` | `UntitledPublishers/emailbot/index.html` |
 
-Each project deploys independently:
+**Do NOT put dashboard HTML files in this repo.** The `email-bot/dashboard.html` and `productivity-dashboard/` folder are deprecated test files.
 
-```bash
-# Email Bot
-cd email-bot
-npm run deploy
+## What belongs here
 
-# Productivity MCP
-cd productivity-mcp
-npm run deploy
-npx wrangler deploy --config wrangler-irene.jsonc
-```
+- `email-bot/` - Email platform Cloudflare Worker (index.js, schema.sql)
+- `productivity-mcp/` - Reference/backup for productivity MCP server
 
-<!-- test deploy -->
+## Deployment
+
+The main website (untitledpublishers.com) is served from the **UntitledPublishers** GitHub repo via GitHub Pages.

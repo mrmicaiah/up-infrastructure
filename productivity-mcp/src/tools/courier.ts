@@ -193,7 +193,7 @@ export function registerCourierTools(ctx: ToolContext) {
       for (const e of result.emails) {
         const statusIcon = e.status === 'sent' ? '✅' : e.status === 'scheduled' ? '⏰' : '📝';
         out += `${statusIcon} **${e.subject}**\n`;
-        out += `   Status: ${e.status}${e.sent_count ? ` (sent to ${e.sent_count})` : ''}\n`;
+        out += `   Status: ${e.status}${e.sent_count ? ` (sent to ${e.sent_count})` : ''}${e.scheduled_at ? `\n   Scheduled: ${e.scheduled_at}` : ''}\n`;
         out += `   ID: ${e.id}\n\n`;
       }
       
@@ -220,6 +220,70 @@ export function registerCourierTools(ctx: ToolContext) {
       });
       
       return { content: [{ type: "text", text: `✅ Campaign created: **${subject}**\nID: ${result.id}\nStatus: draft` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_schedule_campaign", {
+    campaign_id: z.string().describe("Campaign ID to schedule"),
+    scheduled_at: z.string().describe("When to send (ISO 8601 format, e.g., '2026-01-13T09:00:00Z')"),
+  }, async ({ campaign_id, scheduled_at }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}/schedule`, 'POST', {
+        scheduled_at,
+      });
+      
+      const date = new Date(scheduled_at);
+      const formatted = date.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short'
+      });
+      
+      return { content: [{ type: "text", text: `⏰ Campaign scheduled for **${formatted}**` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_cancel_schedule", {
+    campaign_id: z.string().describe("Campaign ID to unschedule"),
+  }, async ({ campaign_id }) => {
+    try {
+      await courierRequest(env, `/api/emails/${campaign_id}/schedule`, 'DELETE');
+      return { content: [{ type: "text", text: `✅ Schedule cancelled - campaign returned to draft` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_send_test", {
+    campaign_id: z.string().describe("Campaign ID"),
+    email: z.string().describe("Email address to send test to"),
+  }, async ({ campaign_id, email }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}/test`, 'POST', {
+        email,
+      });
+      
+      return { content: [{ type: "text", text: `✅ Test email sent to **${email}**` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_send_now", {
+    campaign_id: z.string().describe("Campaign ID to send immediately"),
+  }, async ({ campaign_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/emails/${campaign_id}/send`, 'POST');
+      
+      return { content: [{ type: "text", text: `✅ Campaign sent!\n\nSent: ${result.sent}\nFailed: ${result.failed}\nTotal: ${result.total}` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
     }

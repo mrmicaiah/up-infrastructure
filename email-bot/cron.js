@@ -9,6 +9,7 @@ export async function processSequenceEmails(env) {
   const results = { processed: 0, sent: 0, failed: 0, errors: [] };
   
   try {
+    // Use strftime to get ISO format for proper comparison with stored timestamps
     const due = await env.DB.prepare(`
       SELECT e.id as enrollment_id, e.sequence_id, e.current_step, e.subscription_id,
              ss.id as step_id, ss.subject, ss.preview_text, ss.body_html, ss.body_text, ss.delay_minutes,
@@ -21,7 +22,7 @@ export async function processSequenceEmails(env) {
       JOIN sequences seq ON seq.id = e.sequence_id
       JOIN lists lst ON lst.id = seq.list_id
       WHERE e.status = 'active'
-        AND e.next_send_at <= datetime('now')
+        AND e.next_send_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
         AND ss.status = 'active'
         AND sub.status = 'active'
       LIMIT 50
@@ -82,7 +83,7 @@ export async function processSequenceEmails(env) {
         } else {
           await env.DB.prepare(`
             UPDATE sequence_enrollments 
-            SET status = 'completed', completed_at = datetime('now'), current_step = current_step + 1
+            SET status = 'completed', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), current_step = current_step + 1
             WHERE id = ?
           `).bind(enrollment.enrollment_id).run();
         }
@@ -110,9 +111,10 @@ export async function processScheduledCampaigns(env) {
   const results = { processed: 0, sent: 0, failed: 0, errors: [] };
   
   try {
+    // Use strftime for consistent ISO format comparison
     const due = await env.DB.prepare(`
       SELECT id FROM emails 
-      WHERE status = 'scheduled' AND scheduled_at <= datetime('now')
+      WHERE status = 'scheduled' AND scheduled_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
     `).all();
     
     results.found = due.results?.length || 0;
@@ -151,8 +153,8 @@ export async function handleProcessSequences(request, env) {
         e.status as enrollment_status,
         e.current_step,
         e.next_send_at,
-        datetime('now') as current_time,
-        e.next_send_at <= datetime('now') as is_due,
+        strftime('%Y-%m-%dT%H:%M:%SZ', 'now') as current_time,
+        e.next_send_at <= strftime('%Y-%m-%dT%H:%M:%SZ', 'now') as is_due,
         ss.id as step_id,
         ss.position as step_position,
         ss.status as step_status,

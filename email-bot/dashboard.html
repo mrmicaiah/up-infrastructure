@@ -3,216 +3,309 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Email Platform - Untitled Publishers</title>
+  <title>Courier - Email Platform</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     
     :root {
-      --copper: #b87333;
-      --copper-light: #daa06d;
-      --brass: #cd9b1d;
-      --dark-bronze: #3d2914;
-      --cream: #f5f0e6;
-      --glass-bg: rgba(61, 41, 20, 0.85);
-      --glass-border: rgba(184, 115, 51, 0.4);
+      --blue-600: #2563eb;
+      --blue-500: #3b82f6;
+      --blue-400: #60a5fa;
+      --blue-100: #dbeafe;
+      --blue-50: #eff6ff;
+      --gray-900: #111827;
+      --gray-700: #374151;
+      --gray-500: #6b7280;
+      --gray-400: #9ca3af;
+      --gray-300: #d1d5db;
+      --gray-200: #e5e7eb;
+      --gray-100: #f3f4f6;
+      --gray-50: #f9fafb;
+      --white: #ffffff;
+      --green-600: #16a34a;
+      --green-500: #22c55e;
+      --green-100: #dcfce7;
+      --red-500: #ef4444;
+      --red-100: #fee2e2;
+      --yellow-600: #ca8a04;
+      --yellow-500: #eab308;
+      --yellow-100: #fef9c3;
     }
     
     body {
-      font-family: 'Georgia', serif;
-      background: linear-gradient(135deg, #1a1209 0%, #2d1f0f 50%, #1a1209 100%);
-      min-height: 100vh;
-      color: var(--cream);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--gray-50);
+      color: var(--gray-900);
+      line-height: 1.5;
     }
     
-    /* Login Screen */
-    .login-screen {
+    /* Login */
+    .login-container {
+      min-height: 100vh;
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
+      background: linear-gradient(135deg, var(--blue-50) 0%, var(--white) 100%);
       padding: 20px;
     }
     
     .login-box {
-      background: var(--glass-bg);
-      border: 2px solid var(--glass-border);
+      background: var(--white);
+      border: 1px solid var(--gray-200);
       border-radius: 16px;
-      padding: 40px;
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 400px;
       text-align: center;
-      backdrop-filter: blur(10px);
-      box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
+    }
+    
+    .login-logo {
+      width: 56px;
+      height: 56px;
+      background: var(--blue-500);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      font-size: 1.5rem;
     }
     
     .login-box h1 {
-      color: var(--copper-light);
-      margin-bottom: 8px;
-      font-size: 1.8rem;
+      font-size: 1.75rem;
+      font-weight: 700;
+      margin-bottom: 4px;
+      color: var(--gray-900);
     }
     
-    .login-box p {
-      color: var(--cream);
-      opacity: 0.7;
-      margin-bottom: 24px;
+    .login-box .subtitle {
+      color: var(--gray-500);
+      margin-bottom: 32px;
+      font-size: 0.95rem;
     }
     
     .pin-input {
       display: flex;
-      gap: 10px;
+      gap: 12px;
       justify-content: center;
-      margin-bottom: 20px;
+      margin-bottom: 8px;
     }
     
     .pin-input input {
-      width: 50px;
-      height: 60px;
+      width: 56px;
+      height: 64px;
       text-align: center;
-      font-size: 24px;
-      border: 2px solid var(--glass-border);
-      border-radius: 8px;
-      background: rgba(0,0,0,0.3);
-      color: var(--copper-light);
-      outline: none;
+      font-size: 1.5rem;
+      font-weight: 600;
+      border: 2px solid var(--gray-200);
+      border-radius: 10px;
+      color: var(--gray-900);
+      background: var(--white);
     }
     
     .pin-input input:focus {
-      border-color: var(--copper);
-      box-shadow: 0 0 10px rgba(184, 115, 51, 0.3);
+      outline: none;
+      border-color: var(--blue-500);
+      box-shadow: 0 0 0 3px var(--blue-100);
     }
     
     .error-msg {
-      color: #ff6b6b;
-      margin-top: 10px;
+      color: var(--red-500);
+      font-size: 0.875rem;
+      margin-top: 12px;
       display: none;
     }
     
-    /* Main App */
-    .app { display: none; }
-    .app.active { display: block; }
-    
+    /* Header */
     header {
-      background: var(--glass-bg);
-      border-bottom: 2px solid var(--glass-border);
+      background: var(--white);
+      border-bottom: 1px solid var(--gray-200);
       padding: 16px 24px;
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
     
-    header h1 {
-      color: var(--copper-light);
-      font-size: 1.4rem;
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      background: var(--blue-500);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-size: 1.1rem;
+    }
+    
+    .logo-text {
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: var(--gray-900);
+    }
+    
+    .logo-text span {
+      font-weight: 400;
+      color: var(--gray-400);
+      font-size: 0.85rem;
+      margin-left: 8px;
     }
     
     .header-stats {
       display: flex;
-      gap: 20px;
-      font-size: 0.9rem;
-    }
-    
-    .header-stats span {
-      color: var(--cream);
-      opacity: 0.8;
+      gap: 24px;
+      font-size: 0.875rem;
+      color: var(--gray-500);
     }
     
     .header-stats strong {
-      color: var(--copper-light);
+      color: var(--gray-900);
+      font-weight: 600;
     }
     
     /* Tabs */
     .tabs {
+      background: var(--white);
+      border-bottom: 1px solid var(--gray-200);
       display: flex;
-      background: rgba(0,0,0,0.3);
-      border-bottom: 2px solid var(--glass-border);
+      padding: 0 24px;
+      gap: 4px;
       overflow-x: auto;
     }
     
     .tab {
-      padding: 14px 24px;
-      cursor: pointer;
-      color: var(--cream);
-      opacity: 0.7;
+      padding: 14px 20px;
       border: none;
       background: none;
-      font-family: inherit;
-      font-size: 0.95rem;
+      color: var(--gray-500);
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
       white-space: nowrap;
-      transition: all 0.2s;
+      font-family: inherit;
     }
     
     .tab:hover {
-      opacity: 1;
-      background: rgba(184, 115, 51, 0.1);
+      color: var(--gray-700);
     }
     
     .tab.active {
-      opacity: 1;
-      color: var(--copper-light);
-      border-bottom: 3px solid var(--copper);
-      background: rgba(184, 115, 51, 0.15);
+      color: var(--blue-600);
+      border-bottom-color: var(--blue-600);
     }
+    
+    /* App */
+    .app { display: none; }
+    .app.active { display: block; }
     
     /* Content */
     .content {
       padding: 24px;
-      max-width: 1400px;
+      max-width: 1200px;
       margin: 0 auto;
     }
     
-    .panel {
-      display: none;
+    .panel { display: none; }
+    .panel.active { display: block; }
+    
+    /* Stats Grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
     }
     
-    .panel.active {
-      display: block;
-    }
-    
-    /* Cards */
-    .card {
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 12px;
+    .stat-card {
+      background: var(--white);
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
       padding: 20px;
+    }
+    
+    .stat-card .label {
+      font-size: 0.8rem;
+      color: var(--gray-500);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    
+    .stat-card .value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--gray-900);
+    }
+    
+    .stat-card .change {
+      font-size: 0.8rem;
+      color: var(--green-600);
+      margin-top: 4px;
+    }
+    
+    /* Card */
+    .card {
+      background: var(--white);
+      border: 1px solid var(--gray-200);
+      border-radius: 10px;
       margin-bottom: 20px;
-      backdrop-filter: blur(10px);
     }
     
     .card-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 16px;
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--gray-200);
     }
     
     .card-header h2 {
-      color: var(--copper-light);
-      font-size: 1.2rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--gray-900);
+    }
+    
+    .card-body {
+      padding: 0;
     }
     
     /* Buttons */
     .btn {
-      padding: 10px 20px;
-      border: 2px solid var(--copper);
-      background: transparent;
-      color: var(--copper-light);
+      padding: 8px 16px;
       border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 500;
       cursor: pointer;
+      transition: all 0.15s;
+      border: 1px solid var(--gray-300);
+      background: var(--white);
+      color: var(--gray-700);
       font-family: inherit;
-      font-size: 0.9rem;
-      transition: all 0.2s;
     }
     
     .btn:hover {
-      background: var(--copper);
-      color: var(--dark-bronze);
+      background: var(--gray-50);
+      border-color: var(--gray-400);
     }
     
     .btn-primary {
-      background: var(--copper);
-      color: var(--dark-bronze);
+      background: var(--blue-500);
+      border-color: var(--blue-500);
+      color: white;
     }
     
     .btn-primary:hover {
-      background: var(--copper-light);
+      background: var(--blue-600);
+      border-color: var(--blue-600);
     }
     
     .btn-sm {
@@ -221,16 +314,16 @@
     }
     
     .btn-danger {
-      border-color: #c0392b;
-      color: #e74c3c;
+      color: var(--red-500);
+      border-color: var(--red-500);
     }
     
     .btn-danger:hover {
-      background: #c0392b;
+      background: var(--red-500);
       color: white;
     }
     
-    /* Tables */
+    /* Table */
     .table-container {
       overflow-x: auto;
     }
@@ -240,29 +333,95 @@
       border-collapse: collapse;
     }
     
-    th, td {
-      padding: 12px;
-      text-align: left;
-      border-bottom: 1px solid var(--glass-border);
-    }
-    
     th {
-      color: var(--copper-light);
-      font-weight: normal;
-      font-size: 0.85rem;
+      text-align: left;
+      padding: 12px 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+      color: var(--gray-500);
+      background: var(--gray-50);
+      border-bottom: 1px solid var(--gray-200);
     }
     
     td {
-      color: var(--cream);
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--gray-100);
+      color: var(--gray-700);
+      font-size: 0.9rem;
     }
     
     tr:hover {
-      background: rgba(184, 115, 51, 0.1);
+      background: var(--gray-50);
     }
     
-    /* Forms */
+    tr:last-child td {
+      border-bottom: none;
+    }
+    
+    /* Badge */
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+    
+    .badge-active {
+      background: var(--green-100);
+      color: var(--green-600);
+    }
+    
+    .badge-draft {
+      background: var(--yellow-100);
+      color: var(--yellow-600);
+    }
+    
+    .badge-sent {
+      background: var(--blue-100);
+      color: var(--blue-600);
+    }
+    
+    .badge-archived {
+      background: var(--gray-100);
+      color: var(--gray-500);
+    }
+    
+    /* Actions */
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+    
+    /* Filters */
+    .filters {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    
+    .filters select,
+    .filters input {
+      padding: 8px 12px;
+      border: 1px solid var(--gray-300);
+      border-radius: 6px;
+      font-size: 0.875rem;
+      color: var(--gray-700);
+      background: var(--white);
+      font-family: inherit;
+    }
+    
+    .filters select:focus,
+    .filters input:focus {
+      outline: none;
+      border-color: var(--blue-500);
+      box-shadow: 0 0 0 3px var(--blue-100);
+    }
+    
+    /* Form */
     .form-group {
       margin-bottom: 16px;
     }
@@ -270,8 +429,9 @@
     .form-group label {
       display: block;
       margin-bottom: 6px;
-      color: var(--copper-light);
-      font-size: 0.9rem;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: var(--gray-700);
     }
     
     .form-group input,
@@ -279,19 +439,20 @@
     .form-group textarea {
       width: 100%;
       padding: 10px 12px;
-      border: 1px solid var(--glass-border);
+      border: 1px solid var(--gray-300);
       border-radius: 6px;
-      background: rgba(0,0,0,0.3);
-      color: var(--cream);
+      font-size: 0.9rem;
+      color: var(--gray-900);
+      background: var(--white);
       font-family: inherit;
-      font-size: 0.95rem;
     }
     
     .form-group input:focus,
     .form-group select:focus,
     .form-group textarea:focus {
       outline: none;
-      border-color: var(--copper);
+      border-color: var(--blue-500);
+      box-shadow: 0 0 0 3px var(--blue-100);
     }
     
     .form-group textarea {
@@ -313,7 +474,7 @@
       left: 0;
       right: 0;
       bottom: 0;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0, 0, 0, 0.4);
       z-index: 1000;
       align-items: center;
       justify-content: center;
@@ -325,150 +486,77 @@
     }
     
     .modal {
-      background: var(--glass-bg);
-      border: 2px solid var(--glass-border);
+      background: var(--white);
       border-radius: 12px;
-      padding: 24px;
-      max-width: 600px;
+      max-width: 560px;
       width: 100%;
       max-height: 90vh;
       overflow-y: auto;
-      backdrop-filter: blur(10px);
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
     }
     
     .modal-header {
+      padding: 20px;
+      border-bottom: 1px solid var(--gray-200);
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 20px;
     }
     
     .modal-header h3 {
-      color: var(--copper-light);
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--gray-900);
     }
     
     .modal-close {
       background: none;
       border: none;
-      color: var(--cream);
       font-size: 1.5rem;
       cursor: pointer;
-      opacity: 0.7;
+      color: var(--gray-400);
+      line-height: 1;
     }
     
     .modal-close:hover {
-      opacity: 1;
+      color: var(--gray-600);
+    }
+    
+    .modal-body {
+      padding: 20px;
     }
     
     .modal-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--gray-200);
       display: flex;
-      gap: 12px;
       justify-content: flex-end;
-      margin-top: 20px;
-    }
-    
-    /* Stats Grid */
-    .stats-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
-    }
-    
-    .stat-card {
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
-      border-radius: 10px;
-      padding: 20px;
-      text-align: center;
-    }
-    
-    .stat-card .value {
-      font-size: 2.5rem;
-      color: var(--copper-light);
-      font-weight: bold;
-    }
-    
-    .stat-card .label {
-      color: var(--cream);
-      opacity: 0.7;
-      font-size: 0.9rem;
-      margin-top: 4px;
-    }
-    
-    /* Status badges */
-    .badge {
-      display: inline-block;
-      padding: 4px 10px;
-      border-radius: 12px;
-      font-size: 0.8rem;
-    }
-    
-    .badge-active {
-      background: rgba(39, 174, 96, 0.2);
-      color: #2ecc71;
-      border: 1px solid rgba(39, 174, 96, 0.4);
-    }
-    
-    .badge-draft {
-      background: rgba(241, 196, 15, 0.2);
-      color: #f1c40f;
-      border: 1px solid rgba(241, 196, 15, 0.4);
-    }
-    
-    .badge-sent {
-      background: rgba(52, 152, 219, 0.2);
-      color: #3498db;
-      border: 1px solid rgba(52, 152, 219, 0.4);
-    }
-    
-    .badge-archived {
-      background: rgba(149, 165, 166, 0.2);
-      color: #95a5a6;
-      border: 1px solid rgba(149, 165, 166, 0.4);
-    }
-    
-    /* Loading */
-    .loading {
-      text-align: center;
-      padding: 40px;
-      color: var(--cream);
-      opacity: 0.7;
-    }
-    
-    /* Empty state */
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
-      color: var(--cream);
-      opacity: 0.6;
-    }
-    
-    .empty-state p {
-      margin-bottom: 20px;
+      gap: 12px;
+      background: var(--gray-50);
+      border-radius: 0 0 12px 12px;
     }
     
     /* Toast */
     .toast {
       position: fixed;
-      bottom: 20px;
-      right: 20px;
-      background: var(--glass-bg);
-      border: 1px solid var(--glass-border);
+      bottom: 24px;
+      right: 24px;
+      background: var(--gray-900);
+      color: white;
+      padding: 14px 20px;
       border-radius: 8px;
-      padding: 16px 24px;
-      color: var(--cream);
+      font-size: 0.9rem;
       z-index: 2000;
       display: none;
-      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
     }
     
     .toast.success {
-      border-color: #27ae60;
+      background: var(--green-600);
     }
     
     .toast.error {
-      border-color: #c0392b;
+      background: var(--red-500);
     }
     
     .toast.show {
@@ -477,57 +565,33 @@
     }
     
     @keyframes slideIn {
-      from { transform: translateX(100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
+      from { transform: translateY(20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
     }
     
-    /* Actions */
-    .actions {
-      display: flex;
-      gap: 8px;
-    }
-    
-    /* Filters */
-    .filters {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 16px;
-      flex-wrap: wrap;
-    }
-    
-    .filters select,
-    .filters input {
-      padding: 8px 12px;
-      border: 1px solid var(--glass-border);
-      border-radius: 6px;
-      background: rgba(0,0,0,0.3);
-      color: var(--cream);
-      font-family: inherit;
+    /* Empty & Loading */
+    .loading, .empty-state {
+      text-align: center;
+      padding: 48px 20px;
+      color: var(--gray-500);
     }
     
     /* Responsive */
     @media (max-width: 768px) {
-      .form-row {
-        grid-template-columns: 1fr;
-      }
-      
-      .header-stats {
-        display: none;
-      }
-      
-      .tab {
-        padding: 12px 16px;
-        font-size: 0.85rem;
-      }
+      .form-row { grid-template-columns: 1fr; }
+      .header-stats { display: none; }
+      .tab { padding: 12px 16px; font-size: 0.85rem; }
+      .content { padding: 16px; }
     }
   </style>
 </head>
 <body>
   <!-- Login Screen -->
-  <div class="login-screen" id="loginScreen">
+  <div class="login-container" id="loginScreen">
     <div class="login-box">
-      <h1>📧 Email Platform</h1>
-      <p>Untitled Publishers</p>
+      <div class="login-logo">📧</div>
+      <h1>Courier</h1>
+      <p class="subtitle">Email Platform</p>
       <div class="pin-input">
         <input type="password" maxlength="1" data-pin="0" autofocus>
         <input type="password" maxlength="1" data-pin="1">
@@ -541,7 +605,10 @@
   <!-- Main App -->
   <div class="app" id="app">
     <header>
-      <h1>📧 Email Platform</h1>
+      <div class="logo">
+        <div class="logo-icon">📧</div>
+        <div class="logo-text">Courier <span>Email Platform</span></div>
+      </div>
       <div class="header-stats">
         <span>Lists: <strong id="statLists">-</strong></span>
         <span>Subscribers: <strong id="statSubscribers">-</strong></span>
@@ -568,8 +635,10 @@
           <div class="card-header">
             <h2>Last 7 Days</h2>
           </div>
-          <div id="recentActivity">
-            <div class="loading">Loading...</div>
+          <div class="card-body" style="padding: 20px;">
+            <div id="recentActivity">
+              <div class="loading">Loading...</div>
+            </div>
           </div>
         </div>
       </div>
@@ -581,21 +650,23 @@
             <h2>Email Lists</h2>
             <button class="btn btn-primary" onclick="openModal('list')">+ New List</button>
           </div>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Slug</th>
-                  <th>Subscribers</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="listsTable">
-                <tr><td colspan="5" class="loading">Loading...</td></tr>
-              </tbody>
-            </table>
+          <div class="card-body">
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Slug</th>
+                    <th>Subscribers</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="listsTable">
+                  <tr><td colspan="5" class="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -607,27 +678,31 @@
             <h2>Subscribers</h2>
             <button class="btn btn-primary" onclick="openModal('subscriber')">+ Add Subscriber</button>
           </div>
-          <div class="filters">
-            <select id="filterList" onchange="loadSubscribers()">
-              <option value="">All Lists</option>
-            </select>
-            <input type="text" id="filterSearch" placeholder="Search email..." onkeyup="debounceSearch()">
+          <div class="card-body" style="padding: 20px; padding-bottom: 0;">
+            <div class="filters">
+              <select id="filterList" onchange="loadSubscribers()">
+                <option value="">All Lists</option>
+              </select>
+              <input type="text" id="filterSearch" placeholder="Search email..." onkeyup="debounceSearch()">
+            </div>
           </div>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Email</th>
-                  <th>Name</th>
-                  <th>Source</th>
-                  <th>Subscribed</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="subscribersTable">
-                <tr><td colspan="5" class="loading">Loading...</td></tr>
-              </tbody>
-            </table>
+          <div class="card-body">
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Name</th>
+                    <th>Source</th>
+                    <th>Subscribed</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="subscribersTable">
+                  <tr><td colspan="5" class="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -639,22 +714,24 @@
             <h2>Sequences</h2>
             <button class="btn btn-primary" onclick="openModal('sequence')">+ New Sequence</button>
           </div>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>List</th>
-                  <th>Steps</th>
-                  <th>Active</th>
-                  <th>Status</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="sequencesTable">
-                <tr><td colspan="6" class="loading">Loading...</td></tr>
-              </tbody>
-            </table>
+          <div class="card-body">
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>List</th>
+                    <th>Steps</th>
+                    <th>Active</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="sequencesTable">
+                  <tr><td colspan="6" class="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -666,21 +743,23 @@
             <h2>Email Templates</h2>
             <button class="btn btn-primary" onclick="openModal('template')">+ New Template</button>
           </div>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Subject</th>
-                  <th>Category</th>
-                  <th>Updated</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="templatesTable">
-                <tr><td colspan="5" class="loading">Loading...</td></tr>
-              </tbody>
-            </table>
+          <div class="card-body">
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Subject</th>
+                    <th>Category</th>
+                    <th>Updated</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="templatesTable">
+                  <tr><td colspan="5" class="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -692,31 +771,35 @@
             <h2>Email Campaigns</h2>
             <button class="btn btn-primary" onclick="openModal('campaign')">+ New Campaign</button>
           </div>
-          <div class="filters">
-            <select id="filterCampaignStatus" onchange="loadCampaigns()">
-              <option value="">All Status</option>
-              <option value="draft">Draft</option>
-              <option value="scheduled">Scheduled</option>
-              <option value="sent">Sent</option>
-            </select>
+          <div class="card-body" style="padding: 20px; padding-bottom: 0;">
+            <div class="filters">
+              <select id="filterCampaignStatus" onchange="loadCampaigns()">
+                <option value="">All Status</option>
+                <option value="draft">Draft</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="sent">Sent</option>
+              </select>
+            </div>
           </div>
-          <div class="table-container">
-            <table>
-              <thead>
-                <tr>
-                  <th>Subject</th>
-                  <th>List</th>
-                  <th>Status</th>
-                  <th>Sent</th>
-                  <th>Opens</th>
-                  <th>Clicks</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody id="campaignsTable">
-                <tr><td colspan="7" class="loading">Loading...</td></tr>
-              </tbody>
-            </table>
+          <div class="card-body">
+            <div class="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Subject</th>
+                    <th>List</th>
+                    <th>Status</th>
+                    <th>Sent</th>
+                    <th>Opens</th>
+                    <th>Clicks</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="campaignsTable">
+                  <tr><td colspan="7" class="loading">Loading...</td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
@@ -730,7 +813,7 @@
         <h3 id="modalTitle">Modal</h3>
         <button class="modal-close" onclick="closeModal()">&times;</button>
       </div>
-      <div id="modalContent"></div>
+      <div class="modal-body" id="modalContent"></div>
     </div>
   </div>
 
@@ -829,20 +912,20 @@
       
       document.getElementById('statsGrid').innerHTML = `
         <div class="stat-card">
-          <div class="value">${data.total || 0}</div>
           <div class="label">Total Leads</div>
+          <div class="value">${data.total || 0}</div>
         </div>
         <div class="stat-card">
-          <div class="value">${data.lists?.length || 0}</div>
           <div class="label">Active Lists</div>
+          <div class="value">${data.lists?.length || 0}</div>
         </div>
         <div class="stat-card">
-          <div class="value">${data.emails?.find(e => e.status === 'sent')?.count || 0}</div>
           <div class="label">Campaigns Sent</div>
+          <div class="value">${data.emails?.find(e => e.status === 'sent')?.count || 0}</div>
         </div>
         <div class="stat-card">
-          <div class="value">${data.last_7_days?.reduce((a, d) => a + d.count, 0) || 0}</div>
           <div class="label">New This Week</div>
+          <div class="value">${data.last_7_days?.reduce((a, d) => a + d.count, 0) || 0}</div>
         </div>
       `;
       
@@ -859,7 +942,6 @@
       const data = await api('/api/lists?status=all');
       currentLists = data.lists || [];
       
-      // Update filter dropdown
       document.getElementById('filterList').innerHTML = '<option value="">All Lists</option>' +
         currentLists.map(l => `<option value="${l.id}">${l.name}</option>`).join('');
       
@@ -870,8 +952,8 @@
       
       document.getElementById('listsTable').innerHTML = currentLists.map(list => `
         <tr>
-          <td>${list.name}</td>
-          <td><code>${list.slug}</code></td>
+          <td><strong>${list.name}</strong></td>
+          <td style="color: var(--gray-500);"><code>${list.slug}</code></td>
           <td>${list.subscriber_count || 0}</td>
           <td><span class="badge badge-${list.status}">${list.status}</span></td>
           <td class="actions">
@@ -928,7 +1010,7 @@
       
       document.getElementById('sequencesTable').innerHTML = sequences.map(seq => `
         <tr>
-          <td>${seq.name}</td>
+          <td><strong>${seq.name}</strong></td>
           <td>${seq.list_name || '-'}</td>
           <td>${seq.step_count || 0}</td>
           <td>${seq.active_enrollments || 0}</td>
@@ -953,7 +1035,7 @@
       
       document.getElementById('templatesTable').innerHTML = templates.map(tpl => `
         <tr>
-          <td>${tpl.name}</td>
+          <td><strong>${tpl.name}</strong></td>
           <td>${tpl.subject || '-'}</td>
           <td>${tpl.category || '-'}</td>
           <td>${formatDate(tpl.updated_at)}</td>
@@ -982,7 +1064,7 @@
       
       document.getElementById('campaignsTable').innerHTML = campaigns.map(email => `
         <tr>
-          <td>${email.subject}</td>
+          <td><strong>${email.subject}</strong></td>
           <td>${email.list_name || 'All'}</td>
           <td><span class="badge badge-${email.status}">${email.status}</span></td>
           <td>${email.sent_count || '-'}</td>
@@ -1017,7 +1099,7 @@
               </div>
               <div class="form-group">
                 <label>Description</label>
-                <textarea name="description"></textarea>
+                <textarea name="description" rows="2"></textarea>
               </div>
               <div class="form-row">
                 <div class="form-group">
@@ -1111,7 +1193,7 @@
               </div>
               <div class="form-group">
                 <label>Description</label>
-                <textarea name="description"></textarea>
+                <textarea name="description" rows="2"></textarea>
               </div>
               <div class="modal-footer">
                 <button type="button" class="btn" onclick="closeModal()">Cancel</button>
@@ -1269,12 +1351,14 @@
     async function editList(id) {
       const data = await api(`/api/lists/${id}`);
       openModal('list', id);
-      const form = document.getElementById('listForm');
-      form.name.value = data.list.name;
-      form.slug.value = data.list.slug;
-      form.description.value = data.list.description || '';
-      form.from_name.value = data.list.from_name;
-      form.from_email.value = data.list.from_email;
+      setTimeout(() => {
+        const form = document.getElementById('listForm');
+        form.name.value = data.list.name;
+        form.slug.value = data.list.slug;
+        form.description.value = data.list.description || '';
+        form.from_name.value = data.list.from_name;
+        form.from_email.value = data.list.from_email;
+      }, 10);
     }
     
     async function archiveList(id) {
@@ -1289,11 +1373,13 @@
     async function editTemplate(id) {
       const data = await api(`/api/templates/${id}`);
       openModal('template', id);
-      const form = document.getElementById('templateForm');
-      form.name.value = data.template.name;
-      form.category.value = data.template.category || '';
-      form.subject.value = data.template.subject || '';
-      form.body_html.value = data.template.body_html;
+      setTimeout(() => {
+        const form = document.getElementById('templateForm');
+        form.name.value = data.template.name;
+        form.category.value = data.template.category || '';
+        form.subject.value = data.template.subject || '';
+        form.body_html.value = data.template.body_html;
+      }, 10);
     }
     
     async function duplicateTemplate(id) {
@@ -1316,10 +1402,12 @@
     async function editCampaign(id) {
       const data = await api(`/api/emails/${id}`);
       openModal('campaign', id);
-      const form = document.getElementById('campaignForm');
-      form.list_id.value = data.email.list_id || '';
-      form.subject.value = data.email.subject;
-      form.body_html.value = data.email.body_html;
+      setTimeout(() => {
+        const form = document.getElementById('campaignForm');
+        form.list_id.value = data.email.list_id || '';
+        form.subject.value = data.email.subject;
+        form.body_html.value = data.email.body_html;
+      }, 10);
     }
     
     async function sendCampaign(id) {
@@ -1338,10 +1426,12 @@
     async function editSequence(id) {
       const data = await api(`/api/sequences/${id}`);
       openModal('sequence', id);
-      const form = document.getElementById('sequenceForm');
-      form.name.value = data.sequence.name;
-      form.list_id.value = data.sequence.list_id;
-      form.description.value = data.sequence.description || '';
+      setTimeout(() => {
+        const form = document.getElementById('sequenceForm');
+        form.name.value = data.sequence.name;
+        form.list_id.value = data.sequence.list_id;
+        form.description.value = data.sequence.description || '';
+      }, 10);
     }
     
     async function viewSequenceSteps(id) {
@@ -1350,9 +1440,10 @@
       
       let stepsHtml = data.steps.length 
         ? data.steps.map((s, i) => `
-            <div style="margin-bottom: 12px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 8px;">
-              <strong>Step ${i + 1}</strong> (${s.delay_minutes} min delay)<br>
-              <span style="color: var(--copper-light);">${s.subject}</span>
+            <div style="margin-bottom: 12px; padding: 16px; background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px;">
+              <strong style="color: var(--gray-900);">Step ${i + 1}</strong>
+              <span style="color: var(--gray-500); font-size: 0.85rem; margin-left: 8px;">(${s.delay_minutes} min delay)</span><br>
+              <span style="color: var(--blue-600);">${s.subject}</span>
             </div>
           `).join('')
         : '<p class="empty-state">No steps yet</p>';
@@ -1414,15 +1505,17 @@
       const data = await api(`/api/subscribers/${id}`);
       document.getElementById('modalTitle').textContent = data.subscriber.email;
       document.getElementById('modalContent').innerHTML = `
-        <p><strong>Name:</strong> ${data.subscriber.name || '-'}</p>
-        <p><strong>Source:</strong> ${data.subscriber.source || '-'}</p>
-        <p><strong>Segment:</strong> ${data.subscriber.segment || '-'}</p>
-        <p><strong>Created:</strong> ${formatDate(data.subscriber.created_at)}</p>
-        <hr style="margin: 16px 0; border-color: var(--glass-border);">
-        <h4 style="color: var(--copper-light); margin-bottom: 12px;">Subscriptions</h4>
+        <div style="margin-bottom: 16px;">
+          <p style="margin-bottom: 8px;"><strong>Name:</strong> ${data.subscriber.name || '-'}</p>
+          <p style="margin-bottom: 8px;"><strong>Source:</strong> ${data.subscriber.source || '-'}</p>
+          <p style="margin-bottom: 8px;"><strong>Segment:</strong> ${data.subscriber.segment || '-'}</p>
+          <p><strong>Created:</strong> ${formatDate(data.subscriber.created_at)}</p>
+        </div>
+        <hr style="border: none; border-top: 1px solid var(--gray-200); margin: 20px 0;">
+        <h4 style="color: var(--gray-900); margin-bottom: 12px; font-size: 0.9rem;">Subscriptions</h4>
         ${data.subscriptions?.length 
-          ? data.subscriptions.map(s => `<p>${s.list_name} - ${s.status}</p>`).join('')
-          : '<p>No subscriptions</p>'}
+          ? data.subscriptions.map(s => `<p style="margin-bottom: 4px;">${s.list_name} - <span class="badge badge-${s.status}">${s.status}</span></p>`).join('')
+          : '<p style="color: var(--gray-500);">No subscriptions</p>'}
         <div class="modal-footer">
           <button class="btn" onclick="closeModal()">Close</button>
         </div>

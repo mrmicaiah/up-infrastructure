@@ -18,7 +18,7 @@ const ALLOWED_ORIGINS = [
 ];
 
 const BEEHIIV_SOURCES = ['proverbs-library'];
-const FROM_EMAIL = 'hello@untitledpublishers.com';
+const FROM_EMAIL = 'no-reply@untitledpublishers.com';
 const FROM_NAME = 'Untitled Publishers';
 
 export default {

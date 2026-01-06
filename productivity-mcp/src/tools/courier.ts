@@ -140,6 +140,7 @@ export function registerCourierTools(ctx: ToolContext) {
         out += `• **${l.name}**${l.status !== 'active' ? ` [${l.status}]` : ''}\n`;
         out += `  Slug: ${l.slug}\n`;
         out += `  From: ${l.from_name} <${l.from_email}>\n`;
+        if (l.notify_email) out += `  📬 Notifications: ${l.notify_email}\n`;
         out += `  ID: ${l.id}\n\n`;
       }
       
@@ -162,6 +163,7 @@ export function registerCourierTools(ctx: ToolContext) {
       out += `**Status:** ${l.status}\n`;
       out += `**From:** ${l.from_name} <${l.from_email}>\n`;
       if (l.reply_to) out += `**Reply-To:** ${l.reply_to}\n`;
+      if (l.notify_email) out += `**Lead Notifications:** ${l.notify_email}\n`;
       if (l.description) out += `**Description:** ${l.description}\n`;
       out += `**Created:** ${l.created_at}\n`;
       out += `**Updated:** ${l.updated_at}\n`;
@@ -191,9 +193,10 @@ export function registerCourierTools(ctx: ToolContext) {
     from_name: z.string().optional(),
     from_email: z.string().optional(),
     reply_to: z.string().optional(),
+    notify_email: z.string().optional().describe("Email address to receive new subscriber notifications (empty string to disable)"),
     description: z.string().optional(),
     status: z.enum(['active', 'paused']).optional(),
-  }, async ({ list_id, name, slug, from_name, from_email, reply_to, description, status }) => {
+  }, async ({ list_id, name, slug, from_name, from_email, reply_to, notify_email, description, status }) => {
     try {
       const updates: any = {};
       if (name !== undefined) updates.name = name;
@@ -201,12 +204,20 @@ export function registerCourierTools(ctx: ToolContext) {
       if (from_name !== undefined) updates.from_name = from_name;
       if (from_email !== undefined) updates.from_email = from_email;
       if (reply_to !== undefined) updates.reply_to = reply_to;
+      if (notify_email !== undefined) updates.notify_email = notify_email;
       if (description !== undefined) updates.description = description;
       if (status !== undefined) updates.status = status;
       
       await courierRequest(env, `/api/lists/${list_id}`, 'PUT', updates);
       
-      return { content: [{ type: "text", text: `✅ List updated` }] };
+      let message = '✅ List updated';
+      if (notify_email) {
+        message += `\n📬 Lead notifications will be sent to: ${notify_email}`;
+      } else if (notify_email === '') {
+        message += `\n🔕 Lead notifications disabled`;
+      }
+      
+      return { content: [{ type: "text", text: message }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
     }
@@ -219,7 +230,8 @@ export function registerCourierTools(ctx: ToolContext) {
     slug: z.string().optional().describe("URL-safe identifier (auto-generated if not provided)"),
     description: z.string().optional(),
     reply_to: z.string().optional(),
-  }, async ({ name, from_name, from_email, slug, description, reply_to }) => {
+    notify_email: z.string().optional().describe("Email address to receive new subscriber notifications"),
+  }, async ({ name, from_name, from_email, slug, description, reply_to, notify_email }) => {
     try {
       const result: any = await courierRequest(env, '/api/lists', 'POST', {
         name,
@@ -228,9 +240,15 @@ export function registerCourierTools(ctx: ToolContext) {
         slug,
         description,
         reply_to,
+        notify_email,
       });
       
-      return { content: [{ type: "text", text: `✅ List created: **${name}**\nID: ${result.id}\nSlug: ${result.slug || '(auto-generated)'}` }] };
+      let message = `✅ List created: **${name}**\nID: ${result.id}\nSlug: ${result.slug || '(auto-generated)'}`;
+      if (notify_email) {
+        message += `\n📬 Lead notifications: ${notify_email}`;
+      }
+      
+      return { content: [{ type: "text", text: message }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
     }

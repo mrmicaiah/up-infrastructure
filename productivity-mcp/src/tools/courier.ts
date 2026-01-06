@@ -407,6 +407,271 @@ export function registerCourierTools(ctx: ToolContext) {
     }
   });
 
+  // ==================== SEQUENCES ====================
+
+  server.tool("courier_list_sequences", {
+    list_id: z.string().optional().describe("Filter by list ID"),
+    status: z.enum(['draft', 'active', 'paused']).optional(),
+  }, async ({ list_id, status }) => {
+    try {
+      let path = '/api/sequences';
+      const params = new URLSearchParams();
+      if (list_id) params.append('list_id', list_id);
+      if (status) params.append('status', status);
+      if (params.toString()) path += '?' + params.toString();
+      
+      const result: any = await courierRequest(env, path);
+      
+      if (!result.sequences?.length) {
+        return { content: [{ type: "text", text: "📭 No sequences found" }] };
+      }
+      
+      let out = `🔄 **Email Sequences** (${result.sequences.length})\n\n`;
+      for (const s of result.sequences) {
+        const statusIcon = s.status === 'active' ? '✅' : s.status === 'paused' ? '⏸️' : '📝';
+        out += `${statusIcon} **${s.name}**\n`;
+        out += `   List: ${s.list_name}\n`;
+        out += `   Trigger: ${s.trigger_type}${s.trigger_value ? ` (${s.trigger_value})` : ''}\n`;
+        out += `   Steps: ${s.step_count || 0} | Active: ${s.active_enrollments || 0}\n`;
+        out += `   ID: ${s.id}\n\n`;
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_get_sequence", {
+    sequence_id: z.string().describe("Sequence ID"),
+  }, async ({ sequence_id }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/sequences/${sequence_id}`);
+      const s = result.sequence;
+      const stats = result.stats;
+      
+      const statusIcon = s.status === 'active' ? '✅' : s.status === 'paused' ? '⏸️' : '📝';
+      
+      let out = `${statusIcon} **${s.name}**\n\n`;
+      out += `**ID:** ${s.id}\n`;
+      out += `**Status:** ${s.status}\n`;
+      out += `**List:** ${s.list_name}\n`;
+      out += `**Trigger:** ${s.trigger_type}${s.trigger_value ? ` (${s.trigger_value})` : ''}\n`;
+      if (s.description) out += `**Description:** ${s.description}\n`;
+      out += `\n**Enrollments:**\n`;
+      out += `• Total: ${stats.total_enrollments}\n`;
+      out += `• Active: ${stats.active}\n`;
+      out += `• Completed: ${stats.completed}\n`;
+      out += `• Cancelled: ${stats.cancelled}\n`;
+      
+      if (result.steps?.length) {
+        out += `\n**Steps:**\n`;
+        for (const step of result.steps) {
+          const delayText = step.delay_minutes === 0 ? 'Immediately' : 
+            step.delay_minutes < 60 ? `${step.delay_minutes}m` :
+            step.delay_minutes < 1440 ? `${Math.round(step.delay_minutes / 60)}h` :
+            `${Math.round(step.delay_minutes / 1440)}d`;
+          out += `${step.position}. [${delayText}] ${step.subject}${step.status !== 'active' ? ` (${step.status})` : ''}\n`;
+        }
+      } else {
+        out += `\n⚠️ No steps configured yet.`;
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_create_sequence", {
+    name: z.string().describe("Sequence name"),
+    list_id: z.string().describe("List ID this sequence belongs to"),
+    description: z.string().optional(),
+    trigger_type: z.enum(['subscribe', 'manual', 'tag']).optional().default('subscribe').describe("What triggers enrollment: subscribe (auto on join), manual, or tag"),
+    trigger_value: z.string().optional().describe("For tag trigger: which tag triggers enrollment"),
+  }, async ({ name, list_id, description, trigger_type, trigger_value }) => {
+    try {
+      const result: any = await courierRequest(env, '/api/sequences', 'POST', {
+        name,
+        list_id,
+        description,
+        trigger_type,
+        trigger_value,
+      });
+      
+      return { content: [{ type: "text", text: `✅ Sequence created: **${name}**\nID: ${result.id}\nStatus: draft\n\nNext: Add steps with courier_add_sequence_step` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_update_sequence", {
+    sequence_id: z.string().describe("Sequence ID"),
+    name: z.string().optional(),
+    description: z.string().optional(),
+    status: z.enum(['draft', 'active', 'paused']).optional().describe("Set to 'active' to start auto-enrolling new subscribers"),
+    trigger_type: z.enum(['subscribe', 'manual', 'tag']).optional(),
+    trigger_value: z.string().optional(),
+  }, async ({ sequence_id, name, description, status, trigger_type, trigger_value }) => {
+    try {
+      const updates: any = {};
+      if (name !== undefined) updates.name = name;
+      if (description !== undefined) updates.description = description;
+      if (status !== undefined) updates.status = status;
+      if (trigger_type !== undefined) updates.trigger_type = trigger_type;
+      if (trigger_value !== undefined) updates.trigger_value = trigger_value;
+      
+      await courierRequest(env, `/api/sequences/${sequence_id}`, 'PUT', updates);
+      
+      let message = '✅ Sequence updated';
+      if (status === 'active') {
+        message += '\n\n🟢 Sequence is now ACTIVE - new subscribers will be auto-enrolled';
+      }
+      
+      return { content: [{ type: "text", text: message }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_delete_sequence", {
+    sequence_id: z.string().describe("Sequence ID"),
+  }, async ({ sequence_id }) => {
+    try {
+      await courierRequest(env, `/api/sequences/${sequence_id}`, 'DELETE');
+      return { content: [{ type: "text", text: `✅ Sequence deleted` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  // ==================== SEQUENCE STEPS ====================
+
+  server.tool("courier_add_sequence_step", {
+    sequence_id: z.string().describe("Sequence ID"),
+    subject: z.string().describe("Email subject line"),
+    body_html: z.string().describe("HTML email content"),
+    delay_minutes: z.number().optional().default(0).describe("Minutes to wait before sending (0 = immediately, 1440 = 1 day, 10080 = 1 week)"),
+    preview_text: z.string().optional(),
+  }, async ({ sequence_id, subject, body_html, delay_minutes, preview_text }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/sequences/${sequence_id}/steps`, 'POST', {
+        subject,
+        body_html,
+        delay_minutes,
+        preview_text,
+      });
+      
+      const delayText = delay_minutes === 0 ? 'immediately' : 
+        delay_minutes < 60 ? `after ${delay_minutes} minutes` :
+        delay_minutes < 1440 ? `after ${Math.round(delay_minutes / 60)} hours` :
+        `after ${Math.round(delay_minutes / 1440)} days`;
+      
+      return { content: [{ type: "text", text: `✅ Step ${result.position} added: **${subject}**\nSends: ${delayText}` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_update_sequence_step", {
+    sequence_id: z.string().describe("Sequence ID"),
+    step_id: z.string().describe("Step ID"),
+    subject: z.string().optional(),
+    body_html: z.string().optional(),
+    delay_minutes: z.number().optional(),
+    preview_text: z.string().optional(),
+    status: z.enum(['active', 'paused']).optional(),
+  }, async ({ sequence_id, step_id, subject, body_html, delay_minutes, preview_text, status }) => {
+    try {
+      const updates: any = {};
+      if (subject !== undefined) updates.subject = subject;
+      if (body_html !== undefined) updates.body_html = body_html;
+      if (delay_minutes !== undefined) updates.delay_minutes = delay_minutes;
+      if (preview_text !== undefined) updates.preview_text = preview_text;
+      if (status !== undefined) updates.status = status;
+      
+      await courierRequest(env, `/api/sequences/${sequence_id}/steps/${step_id}`, 'PUT', updates);
+      
+      return { content: [{ type: "text", text: `✅ Step updated` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_delete_sequence_step", {
+    sequence_id: z.string().describe("Sequence ID"),
+    step_id: z.string().describe("Step ID"),
+  }, async ({ sequence_id, step_id }) => {
+    try {
+      await courierRequest(env, `/api/sequences/${sequence_id}/steps/${step_id}`, 'DELETE');
+      return { content: [{ type: "text", text: `✅ Step deleted` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_reorder_sequence_steps", {
+    sequence_id: z.string().describe("Sequence ID"),
+    step_ids: z.array(z.string()).describe("Array of step IDs in desired order"),
+  }, async ({ sequence_id, step_ids }) => {
+    try {
+      await courierRequest(env, `/api/sequences/${sequence_id}/steps/reorder`, 'POST', {
+        step_ids,
+      });
+      return { content: [{ type: "text", text: `✅ Steps reordered` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  // ==================== SEQUENCE ENROLLMENTS ====================
+
+  server.tool("courier_enroll_in_sequence", {
+    sequence_id: z.string().describe("Sequence ID"),
+    email: z.string().describe("Email address to enroll"),
+  }, async ({ sequence_id, email }) => {
+    try {
+      const result: any = await courierRequest(env, `/api/sequences/${sequence_id}/enroll`, 'POST', {
+        email,
+      });
+      
+      return { content: [{ type: "text", text: `✅ Enrolled **${email}** in sequence\nEnrollment ID: ${result.enrollment_id}` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_sequence_enrollments", {
+    sequence_id: z.string().describe("Sequence ID"),
+    status: z.enum(['active', 'completed', 'cancelled']).optional(),
+    limit: z.number().optional().default(50),
+  }, async ({ sequence_id, status, limit }) => {
+    try {
+      let path = `/api/sequences/${sequence_id}/enrollments`;
+      const params = new URLSearchParams();
+      if (status) params.append('status', status);
+      params.append('limit', String(limit));
+      path += '?' + params.toString();
+      
+      const result: any = await courierRequest(env, path);
+      
+      if (!result.enrollments?.length) {
+        return { content: [{ type: "text", text: "📭 No enrollments found" }] };
+      }
+      
+      let out = `👥 **Sequence Enrollments** (${result.enrollments.length})\n\n`;
+      for (const e of result.enrollments) {
+        const statusIcon = e.status === 'active' ? '🟢' : e.status === 'completed' ? '✅' : '❌';
+        out += `${statusIcon} ${e.name || '(no name)'} <${e.email}>\n`;
+        out += `   Step: ${e.current_step} | Enrolled: ${e.enrolled_at?.split('T')[0]}\n`;
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
   // ==================== SUBSCRIBERS ====================
 
   server.tool("courier_list_subscribers", {

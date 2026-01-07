@@ -52,9 +52,9 @@ export async function handleGetPublicPosts(request, env) {
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
     const offset = parseInt(url.searchParams.get('offset') || '0');
     
-    // Simplified query - just check status = published
+    // Include content_html for teasers
     let query = `
-      SELECT id, slug, title, excerpt, category, tags, featured_image, author, published_at, created_at
+      SELECT id, slug, title, excerpt, content_html, category, tags, featured_image, author, published_at, created_at
       FROM blog_posts 
       WHERE site = ? AND status = 'published'
     `;

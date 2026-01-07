@@ -4,7 +4,40 @@
  */
 
 import { generateId, generateSlug, jsonResponse } from './lib.js';
-import { marked } from 'marked';
+
+// Simple markdown to HTML converter (no external deps)
+function parseMarkdown(md) {
+  if (!md) return '';
+  
+  let html = md
+    // Escape HTML
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    // Headers
+    .replace(/^### (.*$)/gim, '<h3>$1</h3>')
+    .replace(/^## (.*$)/gim, '<h2>$1</h2>')
+    .replace(/^# (.*$)/gim, '<h1>$1</h1>')
+    // Bold and italic
+    .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
+    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
+    // Line breaks and paragraphs
+    .replace(/\n\n+/g, '</p><p>')
+    .replace(/\n/g, '<br>');
+  
+  // Wrap in paragraph tags
+  html = '<p>' + html + '</p>';
+  
+  // Clean up empty paragraphs
+  html = html.replace(/<p><\/p>/g, '');
+  html = html.replace(/<p>(<h[1-6]>)/g, '$1');
+  html = html.replace(/(<\/h[1-6]>)<\/p>/g, '$1');
+  
+  return html;
+}
 
 // ==================== PUBLIC ENDPOINTS ====================
 
@@ -230,7 +263,7 @@ export async function handleCreatePost(request, env) {
     }
     
     // Convert markdown to HTML
-    const content_html = marked(data.content_md);
+    const content_html = parseMarkdown(data.content_md);
     
     // Determine status and published_at
     let status = data.status || 'draft';
@@ -308,7 +341,7 @@ export async function handleUpdatePost(id, request, env) {
     // Convert markdown if content changed
     let content_html = post.content_html;
     if (data.content_md && data.content_md !== post.content_md) {
-      content_html = marked(data.content_md);
+      content_html = parseMarkdown(data.content_md);
     }
     
     const now = new Date().toISOString();

@@ -1,4 +1,5 @@
 // Blog tools for micaiahbussey.com (email-bot API)
+// Prefixed with mb_ to avoid conflict with Google Blogger tools
 
 import { z } from "zod";
 import type { ToolContext } from '../types';
@@ -39,7 +40,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== LIST POSTS ====================
 
-  server.tool("blog_list_posts", {
+  server.tool("mb_list_posts", {
     status: z.enum(['draft', 'scheduled', 'published', 'all']).optional().describe("Filter by status (default: all)"),
     limit: z.number().optional().default(20).describe("Number of posts to return (max 100)"),
   }, async ({ status, limit }) => {
@@ -58,7 +59,7 @@ export function registerBlogTools(ctx: ToolContext) {
         return { content: [{ type: "text", text: "📭 No blog posts found" }] };
       }
       
-      let out = `📝 **Blog Posts** (${result.posts.length})\n\n`;
+      let out = `📝 **MicaiahBussey.com Blog Posts** (${result.posts.length})\n\n`;
       
       // Show counts if available
       if (result.counts) {
@@ -84,7 +85,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== GET POST ====================
 
-  server.tool("blog_get_post", {
+  server.tool("mb_get_post", {
     post_id: z.string().describe("Post ID"),
   }, async ({ post_id }) => {
     try {
@@ -117,7 +118,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== CREATE POST ====================
 
-  server.tool("blog_create_post", {
+  server.tool("mb_create_post", {
     title: z.string().describe("Post title"),
     content_md: z.string().describe("Post content in Markdown"),
     slug: z.string().optional().describe("URL slug (auto-generated from title if not provided)"),
@@ -149,8 +150,8 @@ export function registerBlogTools(ctx: ToolContext) {
       
       if (result.status === 'draft') {
         out += `\nNext steps:\n`;
-        out += `• Publish now: blog_publish_post\n`;
-        out += `• Schedule: blog_schedule_post`;
+        out += `• Publish now: mb_publish_post\n`;
+        out += `• Schedule: mb_schedule_post`;
       }
       
       return { content: [{ type: "text", text: out }] };
@@ -161,7 +162,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== UPDATE POST ====================
 
-  server.tool("blog_update_post", {
+  server.tool("mb_update_post", {
     post_id: z.string().describe("Post ID to update"),
     title: z.string().optional().describe("New title"),
     content_md: z.string().optional().describe("New content in Markdown"),
@@ -193,7 +194,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== DELETE POST ====================
 
-  server.tool("blog_delete_post", {
+  server.tool("mb_delete_post", {
     post_id: z.string().describe("Post ID to delete"),
   }, async ({ post_id }) => {
     try {
@@ -206,7 +207,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== PUBLISH POST ====================
 
-  server.tool("blog_publish_post", {
+  server.tool("mb_publish_post", {
     post_id: z.string().describe("Post ID to publish immediately"),
   }, async ({ post_id }) => {
     try {
@@ -220,7 +221,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== SCHEDULE POST ====================
 
-  server.tool("blog_schedule_post", {
+  server.tool("mb_schedule_post", {
     post_id: z.string().describe("Post ID to schedule"),
     scheduled_at: z.string().describe("When to publish (ISO 8601 format, e.g., '2026-01-15T09:00:00Z')"),
   }, async ({ post_id, scheduled_at }) => {
@@ -248,7 +249,7 @@ export function registerBlogTools(ctx: ToolContext) {
 
   // ==================== UNPUBLISH POST ====================
 
-  server.tool("blog_unpublish_post", {
+  server.tool("mb_unpublish_post", {
     post_id: z.string().describe("Post ID to unpublish (revert to draft)"),
   }, async ({ post_id }) => {
     try {

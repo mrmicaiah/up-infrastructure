@@ -52,12 +52,15 @@ export async function handleGetPublicPosts(request, env) {
     const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
     const offset = parseInt(url.searchParams.get('offset') || '0');
     
+    // Use current ISO timestamp for comparison (works with ISO format in DB)
+    const now = new Date().toISOString();
+    
     let query = `
       SELECT id, slug, title, excerpt, category, tags, featured_image, author, published_at, created_at
       FROM blog_posts 
-      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))
+      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= ?)
     `;
-    const params = [site];
+    const params = [site, now];
     
     if (category) {
       query += ' AND category = ?';
@@ -70,8 +73,8 @@ export async function handleGetPublicPosts(request, env) {
     const results = await env.DB.prepare(query).bind(...params).all();
     
     // Get total count
-    let countQuery = `SELECT COUNT(*) as total FROM blog_posts WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))`;
-    const countParams = [site];
+    let countQuery = `SELECT COUNT(*) as total FROM blog_posts WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= ?)`;
+    const countParams = [site, now];
     if (category) {
       countQuery += ' AND category = ?';
       countParams.push(category);
@@ -97,11 +100,12 @@ export async function handleGetPublicPost(slug, request, env) {
   try {
     const url = new URL(request.url);
     const site = url.searchParams.get('site') || 'micaiah-bussey';
+    const now = new Date().toISOString();
     
     const post = await env.DB.prepare(`
       SELECT * FROM blog_posts 
-      WHERE site = ? AND slug = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))
-    `).bind(site, slug).first();
+      WHERE site = ? AND slug = ? AND status = 'published' AND (published_at IS NULL OR published_at <= ?)
+    `).bind(site, slug, now).first();
     
     if (!post) {
       return jsonResponse({ error: 'Post not found' }, 404, request);
@@ -121,14 +125,15 @@ export async function handleGetPublicCategories(request, env) {
   try {
     const url = new URL(request.url);
     const site = url.searchParams.get('site') || 'micaiah-bussey';
+    const now = new Date().toISOString();
     
     const results = await env.DB.prepare(`
       SELECT category, COUNT(*) as count 
       FROM blog_posts 
-      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now')) AND category IS NOT NULL
+      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= ?) AND category IS NOT NULL
       GROUP BY category 
       ORDER BY count DESC
-    `).bind(site).all();
+    `).bind(site, now).all();
     
     return jsonResponse({ categories: results.results || [] }, 200, request);
   } catch (error) {
@@ -144,21 +149,22 @@ export async function handleGetRSSFeed(request, env) {
   try {
     const url = new URL(request.url);
     const site = url.searchParams.get('site') || 'micaiah-bussey';
+    const now = new Date().toISOString();
     
     const posts = await env.DB.prepare(`
       SELECT slug, title, excerpt, content_html, author, published_at 
       FROM blog_posts 
-      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))
+      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= ?)
       ORDER BY published_at DESC 
       LIMIT 20
-    `).bind(site).all();
+    `).bind(site, now).all();
     
     // Get site config (could be expanded later)
     const siteConfig = {
       'micaiah-bussey': {
         title: 'Micaiah Bussey - Thriller Writer',
         description: 'Craft insights, process breakdowns, and behind-the-scenes from a thriller writer.',
-        link: 'https://blog.micaiahbussey.com',
+        link: 'https://micaiahbussey.com/blog',
         author: 'Micaiah Bussey'
       }
     };
@@ -168,8 +174,8 @@ export async function handleGetRSSFeed(request, env) {
     const rssItems = (posts.results || []).map(post => `
       <item>
         <title><![CDATA[${post.title}]]></title>
-        <link>${config.link}/post/${post.slug}</link>
-        <guid>${config.link}/post/${post.slug}</guid>
+        <link>${config.link}/post.html?slug=${post.slug}</link>
+        <guid>${config.link}/post.html?slug=${post.slug}</guid>
         <pubDate>${post.published_at ? new Date(post.published_at).toUTCString() : new Date().toUTCString()}</pubDate>
         <description><![CDATA[${post.excerpt || ''}]]></description>
         <author>${post.author || config.author}</author>

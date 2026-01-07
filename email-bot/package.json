@@ -7,6 +7,9 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev"
   },
+  "dependencies": {
+    "marked": "^12.0.0"
+  },
   "devDependencies": {
     "wrangler": "^3.0.0"
   }

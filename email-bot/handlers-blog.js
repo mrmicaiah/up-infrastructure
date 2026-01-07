@@ -45,122 +45,138 @@ function parseMarkdown(md) {
  * Get published posts (public)
  */
 export async function handleGetPublicPosts(request, env) {
-  const url = new URL(request.url);
-  const site = url.searchParams.get('site') || 'micaiah-bussey';
-  const category = url.searchParams.get('category');
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
-  const offset = parseInt(url.searchParams.get('offset') || '0');
-  
-  let query = `
-    SELECT id, slug, title, excerpt, category, tags, featured_image, author, published_at, created_at
-    FROM blog_posts 
-    WHERE site = ? AND status = 'published' AND published_at <= datetime('now')
-  `;
-  const params = [site];
-  
-  if (category) {
-    query += ' AND category = ?';
-    params.push(category);
+  try {
+    const url = new URL(request.url);
+    const site = url.searchParams.get('site') || 'micaiah-bussey';
+    const category = url.searchParams.get('category');
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
+    const offset = parseInt(url.searchParams.get('offset') || '0');
+    
+    let query = `
+      SELECT id, slug, title, excerpt, category, tags, featured_image, author, published_at, created_at
+      FROM blog_posts 
+      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))
+    `;
+    const params = [site];
+    
+    if (category) {
+      query += ' AND category = ?';
+      params.push(category);
+    }
+    
+    query += ' ORDER BY published_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    
+    const results = await env.DB.prepare(query).bind(...params).all();
+    
+    // Get total count
+    let countQuery = `SELECT COUNT(*) as total FROM blog_posts WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))`;
+    const countParams = [site];
+    if (category) {
+      countQuery += ' AND category = ?';
+      countParams.push(category);
+    }
+    const countResult = await env.DB.prepare(countQuery).bind(...countParams).first();
+    
+    return jsonResponse({
+      posts: results.results || [],
+      total: countResult?.total || 0,
+      limit,
+      offset
+    }, 200, request);
+  } catch (error) {
+    console.error('handleGetPublicPosts error:', error);
+    return jsonResponse({ error: 'Failed to fetch posts', details: error.message }, 500, request);
   }
-  
-  query += ' ORDER BY published_at DESC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-  
-  const results = await env.DB.prepare(query).bind(...params).all();
-  
-  // Get total count
-  let countQuery = `SELECT COUNT(*) as total FROM blog_posts WHERE site = ? AND status = 'published' AND published_at <= datetime('now')`;
-  const countParams = [site];
-  if (category) {
-    countQuery += ' AND category = ?';
-    countParams.push(category);
-  }
-  const countResult = await env.DB.prepare(countQuery).bind(...countParams).first();
-  
-  return jsonResponse({
-    posts: results.results,
-    total: countResult?.total || 0,
-    limit,
-    offset
-  }, 200, request);
 }
 
 /**
  * Get single post by slug (public)
  */
 export async function handleGetPublicPost(slug, request, env) {
-  const url = new URL(request.url);
-  const site = url.searchParams.get('site') || 'micaiah-bussey';
-  
-  const post = await env.DB.prepare(`
-    SELECT * FROM blog_posts 
-    WHERE site = ? AND slug = ? AND status = 'published' AND published_at <= datetime('now')
-  `).bind(site, slug).first();
-  
-  if (!post) {
-    return jsonResponse({ error: 'Post not found' }, 404, request);
+  try {
+    const url = new URL(request.url);
+    const site = url.searchParams.get('site') || 'micaiah-bussey';
+    
+    const post = await env.DB.prepare(`
+      SELECT * FROM blog_posts 
+      WHERE site = ? AND slug = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))
+    `).bind(site, slug).first();
+    
+    if (!post) {
+      return jsonResponse({ error: 'Post not found' }, 404, request);
+    }
+    
+    return jsonResponse({ post }, 200, request);
+  } catch (error) {
+    console.error('handleGetPublicPost error:', error);
+    return jsonResponse({ error: 'Failed to fetch post', details: error.message }, 500, request);
   }
-  
-  return jsonResponse({ post }, 200, request);
 }
 
 /**
  * Get categories with post counts (public)
  */
 export async function handleGetPublicCategories(request, env) {
-  const url = new URL(request.url);
-  const site = url.searchParams.get('site') || 'micaiah-bussey';
-  
-  const results = await env.DB.prepare(`
-    SELECT category, COUNT(*) as count 
-    FROM blog_posts 
-    WHERE site = ? AND status = 'published' AND published_at <= datetime('now') AND category IS NOT NULL
-    GROUP BY category 
-    ORDER BY count DESC
-  `).bind(site).all();
-  
-  return jsonResponse({ categories: results.results }, 200, request);
+  try {
+    const url = new URL(request.url);
+    const site = url.searchParams.get('site') || 'micaiah-bussey';
+    
+    const results = await env.DB.prepare(`
+      SELECT category, COUNT(*) as count 
+      FROM blog_posts 
+      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now')) AND category IS NOT NULL
+      GROUP BY category 
+      ORDER BY count DESC
+    `).bind(site).all();
+    
+    return jsonResponse({ categories: results.results || [] }, 200, request);
+  } catch (error) {
+    console.error('handleGetPublicCategories error:', error);
+    return jsonResponse({ error: 'Failed to fetch categories', details: error.message }, 500, request);
+  }
 }
 
 /**
  * RSS feed (public)
  */
 export async function handleGetRSSFeed(request, env) {
-  const url = new URL(request.url);
-  const site = url.searchParams.get('site') || 'micaiah-bussey';
-  
-  const posts = await env.DB.prepare(`
-    SELECT slug, title, excerpt, content_html, author, published_at 
-    FROM blog_posts 
-    WHERE site = ? AND status = 'published' AND published_at <= datetime('now')
-    ORDER BY published_at DESC 
-    LIMIT 20
-  `).bind(site).all();
-  
-  // Get site config (could be expanded later)
-  const siteConfig = {
-    'micaiah-bussey': {
-      title: 'Micaiah Bussey - Thriller Writer',
-      description: 'Craft insights, process breakdowns, and behind-the-scenes from a thriller writer.',
-      link: 'https://blog.micaiahbussey.com',
-      author: 'Micaiah Bussey'
-    }
-  };
-  
-  const config = siteConfig[site] || siteConfig['micaiah-bussey'];
-  
-  const rssItems = posts.results.map(post => `
-    <item>
-      <title><![CDATA[${post.title}]]></title>
-      <link>${config.link}/post/${post.slug}</link>
-      <guid>${config.link}/post/${post.slug}</guid>
-      <pubDate>${new Date(post.published_at).toUTCString()}</pubDate>
-      <description><![CDATA[${post.excerpt || ''}]]></description>
-      <author>${post.author || config.author}</author>
-    </item>
-  `).join('\n');
-  
-  const rss = `<?xml version="1.0" encoding="UTF-8"?>
+  try {
+    const url = new URL(request.url);
+    const site = url.searchParams.get('site') || 'micaiah-bussey';
+    
+    const posts = await env.DB.prepare(`
+      SELECT slug, title, excerpt, content_html, author, published_at 
+      FROM blog_posts 
+      WHERE site = ? AND status = 'published' AND (published_at IS NULL OR published_at <= datetime('now'))
+      ORDER BY published_at DESC 
+      LIMIT 20
+    `).bind(site).all();
+    
+    // Get site config (could be expanded later)
+    const siteConfig = {
+      'micaiah-bussey': {
+        title: 'Micaiah Bussey - Thriller Writer',
+        description: 'Craft insights, process breakdowns, and behind-the-scenes from a thriller writer.',
+        link: 'https://blog.micaiahbussey.com',
+        author: 'Micaiah Bussey'
+      }
+    };
+    
+    const config = siteConfig[site] || siteConfig['micaiah-bussey'];
+    
+    const rssItems = (posts.results || []).map(post => `
+      <item>
+        <title><![CDATA[${post.title}]]></title>
+        <link>${config.link}/post/${post.slug}</link>
+        <guid>${config.link}/post/${post.slug}</guid>
+        <pubDate>${post.published_at ? new Date(post.published_at).toUTCString() : new Date().toUTCString()}</pubDate>
+        <description><![CDATA[${post.excerpt || ''}]]></description>
+        <author>${post.author || config.author}</author>
+      </item>
+    `).join('\n');
+    
+    const rss = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
   <channel>
     <title>${config.title}</title>
@@ -171,13 +187,17 @@ export async function handleGetRSSFeed(request, env) {
     ${rssItems}
   </channel>
 </rss>`;
-  
-  return new Response(rss, {
-    headers: {
-      'Content-Type': 'application/rss+xml',
-      'Cache-Control': 'public, max-age=3600'
-    }
-  });
+    
+    return new Response(rss, {
+      headers: {
+        'Content-Type': 'application/rss+xml',
+        'Cache-Control': 'public, max-age=3600'
+      }
+    });
+  } catch (error) {
+    console.error('handleGetRSSFeed error:', error);
+    return jsonResponse({ error: 'Failed to generate feed', details: error.message }, 500, request);
+  }
 }
 
 // ==================== ADMIN ENDPOINTS ====================
@@ -186,52 +206,62 @@ export async function handleGetRSSFeed(request, env) {
  * List all posts (admin)
  */
 export async function handleGetPosts(request, env) {
-  const url = new URL(request.url);
-  const site = url.searchParams.get('site') || 'micaiah-bussey';
-  const status = url.searchParams.get('status'); // draft, scheduled, published, or all
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 100);
-  const offset = parseInt(url.searchParams.get('offset') || '0');
-  
-  let query = 'SELECT * FROM blog_posts WHERE site = ?';
-  const params = [site];
-  
-  if (status && status !== 'all') {
-    query += ' AND status = ?';
-    params.push(status);
+  try {
+    const url = new URL(request.url);
+    const site = url.searchParams.get('site') || 'micaiah-bussey';
+    const status = url.searchParams.get('status'); // draft, scheduled, published, or all
+    const limit = Math.min(parseInt(url.searchParams.get('limit') || '20'), 100);
+    const offset = parseInt(url.searchParams.get('offset') || '0');
+    
+    let query = 'SELECT * FROM blog_posts WHERE site = ?';
+    const params = [site];
+    
+    if (status && status !== 'all') {
+      query += ' AND status = ?';
+      params.push(status);
+    }
+    
+    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    
+    const results = await env.DB.prepare(query).bind(...params).all();
+    
+    // Get counts by status
+    const counts = await env.DB.prepare(`
+      SELECT status, COUNT(*) as count 
+      FROM blog_posts 
+      WHERE site = ?
+      GROUP BY status
+    `).bind(site).all();
+    
+    return jsonResponse({
+      posts: results.results || [],
+      counts: (counts.results || []).reduce((acc, r) => { acc[r.status] = r.count; return acc; }, {}),
+      limit,
+      offset
+    });
+  } catch (error) {
+    console.error('handleGetPosts error:', error);
+    return jsonResponse({ error: 'Failed to fetch posts', details: error.message }, 500);
   }
-  
-  query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
-  params.push(limit, offset);
-  
-  const results = await env.DB.prepare(query).bind(...params).all();
-  
-  // Get counts by status
-  const counts = await env.DB.prepare(`
-    SELECT status, COUNT(*) as count 
-    FROM blog_posts 
-    WHERE site = ?
-    GROUP BY status
-  `).bind(site).all();
-  
-  return jsonResponse({
-    posts: results.results,
-    counts: counts.results.reduce((acc, r) => { acc[r.status] = r.count; return acc; }, {}),
-    limit,
-    offset
-  });
 }
 
 /**
  * Get single post (admin)
  */
 export async function handleGetPost(id, env) {
-  const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
-  
-  if (!post) {
-    return jsonResponse({ error: 'Post not found' }, 404);
+  try {
+    const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
+    
+    if (!post) {
+      return jsonResponse({ error: 'Post not found' }, 404);
+    }
+    
+    return jsonResponse({ post });
+  } catch (error) {
+    console.error('handleGetPost error:', error);
+    return jsonResponse({ error: 'Failed to fetch post', details: error.message }, 500);
   }
-  
-  return jsonResponse({ post });
 }
 
 /**
@@ -311,7 +341,7 @@ export async function handleCreatePost(request, env) {
     
   } catch (error) {
     console.error('Create post error:', error);
-    return jsonResponse({ error: 'Failed to create post' }, 500);
+    return jsonResponse({ error: 'Failed to create post', details: error.message }, 500);
   }
 }
 
@@ -377,7 +407,7 @@ export async function handleUpdatePost(id, request, env) {
     
   } catch (error) {
     console.error('Update post error:', error);
-    return jsonResponse({ error: 'Failed to update post' }, 500);
+    return jsonResponse({ error: 'Failed to update post', details: error.message }, 500);
   }
 }
 
@@ -385,37 +415,47 @@ export async function handleUpdatePost(id, request, env) {
  * Delete post
  */
 export async function handleDeletePost(id, env) {
-  const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
-  if (!post) {
-    return jsonResponse({ error: 'Post not found' }, 404);
+  try {
+    const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
+    if (!post) {
+      return jsonResponse({ error: 'Post not found' }, 404);
+    }
+    
+    await env.DB.prepare('DELETE FROM blog_posts WHERE id = ?').bind(id).run();
+    
+    return jsonResponse({ success: true, message: 'Post deleted' });
+  } catch (error) {
+    console.error('Delete post error:', error);
+    return jsonResponse({ error: 'Failed to delete post', details: error.message }, 500);
   }
-  
-  await env.DB.prepare('DELETE FROM blog_posts WHERE id = ?').bind(id).run();
-  
-  return jsonResponse({ success: true, message: 'Post deleted' });
 }
 
 /**
  * Publish post immediately
  */
 export async function handlePublishPost(id, env) {
-  const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
-  if (!post) {
-    return jsonResponse({ error: 'Post not found' }, 404);
+  try {
+    const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
+    if (!post) {
+      return jsonResponse({ error: 'Post not found' }, 404);
+    }
+    
+    const now = new Date().toISOString();
+    
+    await env.DB.prepare(`
+      UPDATE blog_posts SET 
+        status = 'published', 
+        published_at = ?,
+        scheduled_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).bind(now, now, id).run();
+    
+    return jsonResponse({ success: true, message: 'Post published', published_at: now });
+  } catch (error) {
+    console.error('Publish post error:', error);
+    return jsonResponse({ error: 'Failed to publish post', details: error.message }, 500);
   }
-  
-  const now = new Date().toISOString();
-  
-  await env.DB.prepare(`
-    UPDATE blog_posts SET 
-      status = 'published', 
-      published_at = ?,
-      scheduled_at = NULL,
-      updated_at = ?
-    WHERE id = ?
-  `).bind(now, now, id).run();
-  
-  return jsonResponse({ success: true, message: 'Post published', published_at: now });
 }
 
 /**
@@ -454,7 +494,7 @@ export async function handleSchedulePost(id, request, env) {
     
   } catch (error) {
     console.error('Schedule post error:', error);
-    return jsonResponse({ error: 'Failed to schedule post' }, 500);
+    return jsonResponse({ error: 'Failed to schedule post', details: error.message }, 500);
   }
 }
 
@@ -462,55 +502,65 @@ export async function handleSchedulePost(id, request, env) {
  * Unpublish post (revert to draft)
  */
 export async function handleUnpublishPost(id, env) {
-  const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
-  if (!post) {
-    return jsonResponse({ error: 'Post not found' }, 404);
+  try {
+    const post = await env.DB.prepare('SELECT * FROM blog_posts WHERE id = ?').bind(id).first();
+    if (!post) {
+      return jsonResponse({ error: 'Post not found' }, 404);
+    }
+    
+    const now = new Date().toISOString();
+    
+    await env.DB.prepare(`
+      UPDATE blog_posts SET 
+        status = 'draft', 
+        published_at = NULL,
+        scheduled_at = NULL,
+        updated_at = ?
+      WHERE id = ?
+    `).bind(now, id).run();
+    
+    return jsonResponse({ success: true, message: 'Post reverted to draft' });
+  } catch (error) {
+    console.error('Unpublish post error:', error);
+    return jsonResponse({ error: 'Failed to unpublish post', details: error.message }, 500);
   }
-  
-  const now = new Date().toISOString();
-  
-  await env.DB.prepare(`
-    UPDATE blog_posts SET 
-      status = 'draft', 
-      published_at = NULL,
-      scheduled_at = NULL,
-      updated_at = ?
-    WHERE id = ?
-  `).bind(now, id).run();
-  
-  return jsonResponse({ success: true, message: 'Post reverted to draft' });
 }
 
 // ==================== CRON: Process Scheduled Posts ====================
 
 export async function processScheduledPosts(env) {
-  const now = new Date().toISOString();
-  
-  // Find posts that should be published
-  const scheduled = await env.DB.prepare(`
-    SELECT id, title FROM blog_posts 
-    WHERE status = 'scheduled' AND scheduled_at <= ?
-  `).bind(now).all();
-  
-  let published = 0;
-  
-  for (const post of scheduled.results) {
-    try {
-      await env.DB.prepare(`
-        UPDATE blog_posts SET 
-          status = 'published',
-          published_at = scheduled_at,
-          scheduled_at = NULL,
-          updated_at = ?
-        WHERE id = ?
-      `).bind(now, post.id).run();
-      
-      published++;
-      console.log(`Published scheduled post: ${post.title}`);
-    } catch (error) {
-      console.error(`Failed to publish post ${post.id}:`, error);
+  try {
+    const now = new Date().toISOString();
+    
+    // Find posts that should be published
+    const scheduled = await env.DB.prepare(`
+      SELECT id, title FROM blog_posts 
+      WHERE status = 'scheduled' AND scheduled_at <= ?
+    `).bind(now).all();
+    
+    let published = 0;
+    
+    for (const post of (scheduled.results || [])) {
+      try {
+        await env.DB.prepare(`
+          UPDATE blog_posts SET 
+            status = 'published',
+            published_at = scheduled_at,
+            scheduled_at = NULL,
+            updated_at = ?
+          WHERE id = ?
+        `).bind(now, post.id).run();
+        
+        published++;
+        console.log(`Published scheduled post: ${post.title}`);
+      } catch (error) {
+        console.error(`Failed to publish post ${post.id}:`, error);
+      }
     }
+    
+    return { processed: (scheduled.results || []).length, published };
+  } catch (error) {
+    console.error('processScheduledPosts error:', error);
+    return { processed: 0, published: 0, error: error.message };
   }
-  
-  return { processed: scheduled.results.length, published };
 }

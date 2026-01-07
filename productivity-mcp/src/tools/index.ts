@@ -14,6 +14,7 @@ import { registerGitHubTools } from './github';
 import { registerSkillsTools } from './skills';
 import { registerSprintTools } from './sprints';
 import { registerCourierTools } from './courier';
+import { registerBlogTools } from './blog';
 
 export function registerAllTools(ctx: ToolContext) {
   registerTaskTools(ctx);
@@ -31,6 +32,7 @@ export function registerAllTools(ctx: ToolContext) {
   registerSkillsTools(ctx);
   registerSprintTools(ctx);
   registerCourierTools(ctx);
+  registerBlogTools(ctx);
 }
 
 // Re-export individual registrations for selective use
@@ -50,4 +52,5 @@ export {
   registerSkillsTools,
   registerSprintTools,
   registerCourierTools,
+  registerBlogTools,
 };

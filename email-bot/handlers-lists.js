@@ -10,8 +10,13 @@ export async function handleGetLists(request, env) {
   
   let query = `
     SELECT l.*, 
-      (SELECT COUNT(*) FROM subscriptions s WHERE s.list_id = l.id AND s.status = 'active') as subscriber_count 
-    FROM lists l WHERE 1=1
+      (SELECT COUNT(*) FROM subscriptions s WHERE s.list_id = l.id AND s.status = 'active') as subscriber_count,
+      ct.name as campaign_template_name,
+      st.name as sequence_template_name
+    FROM lists l
+    LEFT JOIN templates ct ON l.campaign_template_id = ct.id
+    LEFT JOIN templates st ON l.sequence_template_id = st.id
+    WHERE 1=1
   `;
   const params = [];
   
@@ -48,8 +53,8 @@ export async function handleCreateList(request, env) {
     }
     
     await env.DB.prepare(`
-      INSERT INTO lists (id, name, slug, description, from_name, from_email, reply_to, notify_email, double_optin, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      INSERT INTO lists (id, name, slug, description, from_name, from_email, reply_to, notify_email, double_optin, campaign_template_id, sequence_template_id, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `).bind(
       id,
       data.name,
@@ -60,6 +65,8 @@ export async function handleCreateList(request, env) {
       data.reply_to || null,
       data.notify_email || null,
       data.double_optin ? 1 : 0,
+      data.campaign_template_id || null,
+      data.sequence_template_id || null,
       now,
       now
     ).run();
@@ -72,9 +79,26 @@ export async function handleCreateList(request, env) {
 }
 
 export async function handleGetList(id, env) {
-  let list = await env.DB.prepare('SELECT * FROM lists WHERE id = ?').bind(id).first();
+  let list = await env.DB.prepare(`
+    SELECT l.*,
+      ct.name as campaign_template_name,
+      st.name as sequence_template_name
+    FROM lists l
+    LEFT JOIN templates ct ON l.campaign_template_id = ct.id
+    LEFT JOIN templates st ON l.sequence_template_id = st.id
+    WHERE l.id = ?
+  `).bind(id).first();
+  
   if (!list) {
-    list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(id).first();
+    list = await env.DB.prepare(`
+      SELECT l.*,
+        ct.name as campaign_template_name,
+        st.name as sequence_template_name
+      FROM lists l
+      LEFT JOIN templates ct ON l.campaign_template_id = ct.id
+      LEFT JOIN templates st ON l.sequence_template_id = st.id
+      WHERE l.slug = ?
+    `).bind(id).first();
   }
   
   if (!list) {
@@ -126,6 +150,8 @@ export async function handleUpdateList(id, request, env) {
     const notify_email = data.notify_email !== undefined ? (data.notify_email || null) : list.notify_email;
     const double_optin = data.double_optin !== undefined ? (data.double_optin ? 1 : 0) : list.double_optin;
     const welcome_sequence_id = data.welcome_sequence_id !== undefined ? data.welcome_sequence_id : list.welcome_sequence_id;
+    const campaign_template_id = data.campaign_template_id !== undefined ? data.campaign_template_id : list.campaign_template_id;
+    const sequence_template_id = data.sequence_template_id !== undefined ? data.sequence_template_id : list.sequence_template_id;
     
     await env.DB.prepare(`
       UPDATE lists SET
@@ -138,6 +164,8 @@ export async function handleUpdateList(id, request, env) {
         notify_email = ?,
         double_optin = ?,
         welcome_sequence_id = ?,
+        campaign_template_id = ?,
+        sequence_template_id = ?,
         updated_at = ?
       WHERE id = ?
     `).bind(
@@ -150,6 +178,8 @@ export async function handleUpdateList(id, request, env) {
       notify_email,
       double_optin,
       welcome_sequence_id,
+      campaign_template_id,
+      sequence_template_id,
       new Date().toISOString(),
       id
     ).run();

@@ -21,7 +21,7 @@ export async function handleGetListSubscribers(listId, request, env) {
   const offset = Math.max(parseInt(url.searchParams.get('offset') || '0'), 0);
   
   let query = `
-    SELECT s.id as subscription_id, s.status as subscription_status, s.source, s.funnel, 
+    SELECT s.id as subscription_id, s.list_id, s.status as subscription_status, s.source, s.funnel, 
            s.subscribed_at, s.unsubscribed_at, l.id as lead_id, l.email, l.name, l.created_at
     FROM subscriptions s
     JOIN leads l ON s.lead_id = l.id
@@ -138,6 +138,69 @@ export async function handleRemoveSubscriber(listId, subscriptionId, env) {
   `).bind(new Date().toISOString(), subscriptionId).run();
   
   return jsonResponse({ success: true, message: 'Subscriber removed from list' });
+}
+
+export async function handleDeleteSubscribers(request, env) {
+  try {
+    const data = await request.json();
+    const { subscription_ids, lead_ids, permanent } = data;
+    
+    if (!subscription_ids?.length && !lead_ids?.length) {
+      return jsonResponse({ error: 'subscription_ids or lead_ids required' }, 400);
+    }
+    
+    let deleted = 0;
+    
+    if (subscription_ids?.length) {
+      // Delete subscriptions and related enrollments
+      for (const subId of subscription_ids) {
+        // Delete any sequence enrollments for this subscription
+        await env.DB.prepare('DELETE FROM sequence_enrollments WHERE subscription_id = ?').bind(subId).run();
+        
+        if (permanent) {
+          // Permanently delete the subscription
+          await env.DB.prepare('DELETE FROM subscriptions WHERE id = ?').bind(subId).run();
+        } else {
+          // Soft delete - mark as unsubscribed
+          await env.DB.prepare(`
+            UPDATE subscriptions SET status = 'unsubscribed', unsubscribed_at = ? WHERE id = ?
+          `).bind(new Date().toISOString(), subId).run();
+        }
+        deleted++;
+      }
+    }
+    
+    if (lead_ids?.length && permanent) {
+      // Permanently delete leads and all their data
+      for (const leadId of lead_ids) {
+        // Delete sequence enrollments
+        await env.DB.prepare(`
+          DELETE FROM sequence_enrollments WHERE subscription_id IN (
+            SELECT id FROM subscriptions WHERE lead_id = ?
+          )
+        `).bind(leadId).run();
+        
+        // Delete email sends
+        await env.DB.prepare('DELETE FROM email_sends WHERE lead_id = ?').bind(leadId).run();
+        
+        // Delete subscriptions
+        await env.DB.prepare('DELETE FROM subscriptions WHERE lead_id = ?').bind(leadId).run();
+        
+        // Delete touches
+        await env.DB.prepare('DELETE FROM touches WHERE lead_id = ?').bind(leadId).run();
+        
+        // Delete the lead
+        await env.DB.prepare('DELETE FROM leads WHERE id = ?').bind(leadId).run();
+        
+        deleted++;
+      }
+    }
+    
+    return jsonResponse({ success: true, deleted });
+  } catch (error) {
+    console.error('Delete subscribers error:', error);
+    return jsonResponse({ error: 'Failed to delete subscribers: ' + error.message }, 500);
+  }
 }
 
 export async function handleExportListSubscribers(listId, env) {
@@ -334,7 +397,7 @@ export async function handleGetSubscriber(id, env) {
   const emailHistory = await env.DB.prepare(`
     SELECT es.*, e.subject 
     FROM email_sends es 
-    JOIN emails e ON es.email_id = e.id 
+    LEFT JOIN emails e ON es.email_id = e.id 
     WHERE es.lead_id = ? 
     ORDER BY es.created_at DESC 
     LIMIT 20

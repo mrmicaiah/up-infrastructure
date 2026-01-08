@@ -107,132 +107,35 @@ export function parseCSVLine(line) {
   return result;
 }
 
-// ==================== AWS SES ====================
-
-async function sha256(message) {
-  const msgBuffer = new TextEncoder().encode(message);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
-  return Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function hmac(key, message) {
-  const cryptoKey = await crypto.subtle.importKey(
-    'raw',
-    typeof key === 'string' ? new TextEncoder().encode(key) : key,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', cryptoKey, new TextEncoder().encode(message));
-  return new Uint8Array(sig);
-}
-
-async function hmacHex(key, message) {
-  const sig = await hmac(key, message);
-  return Array.from(sig).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function getSignatureKey(key, dateStamp, region, service) {
-  const kDate = await hmac('AWS4' + key, dateStamp);
-  const kRegion = await hmac(kDate, region);
-  const kService = await hmac(kRegion, service);
-  const kSigning = await hmac(kService, 'aws4_request');
-  return kSigning;
-}
-
-async function signAWSRequest(request, env) {
-  const region = env.AWS_REGION || 'us-east-2';
-  const service = 'ses';
-  const accessKeyId = env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
-  
-  const date = new Date();
-  const amzDate = date.toISOString().replace(/[:-]|\.\d{3}/g, '');
-  const dateStamp = amzDate.slice(0, 8);
-  
-  const url = new URL(request.url);
-  const canonicalUri = url.pathname;
-  const canonicalQuerystring = url.search.slice(1);
-  
-  const headers = new Headers(request.headers);
-  headers.set('host', url.host);
-  headers.set('x-amz-date', amzDate);
-  
-  const signedHeaders = 'content-type;host;x-amz-date';
-  const body = await request.clone().text();
-  const payloadHash = await sha256(body);
-  
-  const canonicalHeaders = `content-type:${headers.get('content-type')}\nhost:${url.host}\nx-amz-date:${amzDate}\n`;
-  
-  const canonicalRequest = [
-    request.method,
-    canonicalUri,
-    canonicalQuerystring,
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash
-  ].join('\n');
-  
-  const algorithm = 'AWS4-HMAC-SHA256';
-  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
-  const stringToSign = [
-    algorithm,
-    amzDate,
-    credentialScope,
-    await sha256(canonicalRequest)
-  ].join('\n');
-  
-  const signingKey = await getSignatureKey(secretAccessKey, dateStamp, region, service);
-  const signature = await hmacHex(signingKey, stringToSign);
-  
-  const authorizationHeader = `${algorithm} Credential=${accessKeyId}/${credentialScope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
-  
-  headers.set('Authorization', authorizationHeader);
-  
-  return new Request(request.url, {
-    method: request.method,
-    headers: headers,
-    body: body
-  });
-}
+// ==================== RESEND EMAIL ====================
 
 export async function sendEmailViaSES(env, to, subject, htmlBody, textBody, fromName, fromEmail) {
-  const region = env.AWS_REGION || 'us-east-2';
-  const endpoint = `https://email.${region}.amazonaws.com/`;
+  // Note: Function name kept as sendEmailViaSES for backward compatibility
+  // but now uses Resend API
   
-  const params = new URLSearchParams();
-  params.append('Action', 'SendEmail');
-  params.append('Version', '2010-12-01');
-  params.append('Source', `${fromName || DEFAULT_FROM_NAME} <${fromEmail || DEFAULT_FROM_EMAIL}>`);
-  params.append('Destination.ToAddresses.member.1', to);
-  params.append('Message.Subject.Data', subject);
-  params.append('Message.Subject.Charset', 'UTF-8');
-  params.append('Message.Body.Html.Data', htmlBody);
-  params.append('Message.Body.Html.Charset', 'UTF-8');
-  if (textBody) {
-    params.append('Message.Body.Text.Data', textBody);
-    params.append('Message.Body.Text.Charset', 'UTF-8');
-  }
-  
-  const request = new Request(endpoint, {
+  const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
+      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json'
     },
-    body: params.toString()
+    body: JSON.stringify({
+      from: `${fromName || DEFAULT_FROM_NAME} <${fromEmail || DEFAULT_FROM_EMAIL}>`,
+      to: [to],
+      subject: subject,
+      html: htmlBody,
+      text: textBody || undefined
+    })
   });
   
-  const signedRequest = await signAWSRequest(request, env);
-  const response = await fetch(signedRequest);
-  const responseText = await response.text();
+  const result = await response.json();
   
   if (!response.ok) {
-    console.error('SES Error:', responseText);
-    throw new Error(`SES Error: ${response.status} - ${responseText}`);
+    console.error('Resend Error:', result);
+    throw new Error(`Resend Error: ${response.status} - ${result.message || JSON.stringify(result)}`);
   }
   
-  const messageIdMatch = responseText.match(/<MessageId>(.+?)<\/MessageId>/);
-  return messageIdMatch ? messageIdMatch[1] : null;
+  return result.id;
 }
 
 // ==================== EMAIL RENDERING ====================

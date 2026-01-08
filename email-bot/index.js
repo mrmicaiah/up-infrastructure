@@ -10,7 +10,7 @@ import { checkAuth, getCorsHeaders, jsonResponse, CORS_HEADERS } from './lib.js'
 // Handler imports
 import { handleTrackOpen, handleTrackClick, handlePublicUnsubscribe } from './handlers-tracking.js';
 import { handleGetLists, handleCreateList, handleGetList, handleUpdateList, handleArchiveList, handleListStats } from './handlers-lists.js';
-import { handleGetListSubscribers, handleAddSubscriber, handleRemoveSubscriber, handleExportListSubscribers, handleImportSubscribers, handleGetSubscribers, handleGetSubscriber, handleUnsubscribeLead } from './handlers-subscribers.js';
+import { handleGetListSubscribers, handleAddSubscriber, handleRemoveSubscriber, handleDeleteSubscribers, handleExportListSubscribers, handleImportSubscribers, handleGetSubscribers, handleGetSubscriber, handleUnsubscribeLead } from './handlers-subscribers.js';
 import { handleGetSequences, handleCreateSequence, handleGetSequence, handleUpdateSequence, handleDeleteSequence, handleGetSequenceSteps, handleAddSequenceStep, handleUpdateSequenceStep, handleDeleteSequenceStep, handleReorderSequenceSteps, handleEnrollInSequence, handleGetSequenceEnrollments } from './handlers-sequences.js';
 import { handleGetEmails, handleCreateEmail, handleGetEmail, handleUpdateEmail, handleDeleteEmail, handleDuplicateEmail, handlePreviewEmail, handleScheduleEmail, handleCancelSchedule, handleSendTestEmail, handleSendEmail, handleEmailStats } from './handlers-emails.js';
 import { handleGetTemplates, handleCreateTemplate, handleGetTemplate, handleUpdateTemplate, handleDeleteTemplate, handleDuplicateTemplate } from './handlers-templates.js';
@@ -206,6 +206,9 @@ export default {
     // === SUBSCRIBERS ===
     if (url.pathname === '/api/subscribers' && request.method === 'GET') {
       return handleGetSubscribers(request, env);
+    }
+    if (url.pathname === '/api/subscribers/delete' && request.method === 'POST') {
+      return handleDeleteSubscribers(request, env);
     }
     if (url.pathname.match(/^\/api\/subscribers\/\d+$/) && request.method === 'GET') {
       return handleGetSubscriber(url.pathname.split('/').pop(), env);

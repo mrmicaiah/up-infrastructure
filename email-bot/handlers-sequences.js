@@ -58,8 +58,8 @@ export async function handleCreateSequence(request, env) {
     const now = new Date().toISOString();
     
     await env.DB.prepare(`
-      INSERT INTO sequences (id, list_id, name, description, trigger_type, trigger_value, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'draft', ?, ?)
+      INSERT INTO sequences (id, list_id, name, description, trigger_type, trigger_value, send_timezone, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)
     `).bind(
       id,
       list.id,
@@ -67,6 +67,7 @@ export async function handleCreateSequence(request, env) {
       data.description || null,
       data.trigger_type || 'subscribe',
       data.trigger_value || null,
+      data.send_timezone || 'America/Chicago',
       now,
       now
     ).run();
@@ -131,6 +132,7 @@ export async function handleUpdateSequence(id, request, env) {
     if (data.description !== undefined) { updates.push('description = ?'); params.push(data.description); }
     if (data.trigger_type !== undefined) { updates.push('trigger_type = ?'); params.push(data.trigger_type); }
     if (data.trigger_value !== undefined) { updates.push('trigger_value = ?'); params.push(data.trigger_value); }
+    if (data.send_timezone !== undefined) { updates.push('send_timezone = ?'); params.push(data.send_timezone); }
     if (data.status !== undefined) { updates.push('status = ?'); params.push(data.status); }
     
     if (updates.length === 0) {
@@ -214,6 +216,11 @@ export async function handleAddSequenceStep(sequenceId, request, env) {
       return jsonResponse({ error: 'Body HTML required' }, 400);
     }
     
+    // Validate send_at_time format if provided (HH:MM)
+    if (data.send_at_time && !/^\d{2}:\d{2}$/.test(data.send_at_time)) {
+      return jsonResponse({ error: 'send_at_time must be in HH:MM format (e.g., "07:00")' }, 400);
+    }
+    
     const lastStep = await env.DB.prepare(
       'SELECT MAX(position) as max_pos FROM sequence_steps WHERE sequence_id = ?'
     ).bind(sequenceId).first();
@@ -223,13 +230,14 @@ export async function handleAddSequenceStep(sequenceId, request, env) {
     const now = new Date().toISOString();
     
     await env.DB.prepare(`
-      INSERT INTO sequence_steps (id, sequence_id, position, delay_minutes, subject, preview_text, body_html, body_text, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
+      INSERT INTO sequence_steps (id, sequence_id, position, delay_minutes, send_at_time, subject, preview_text, body_html, body_text, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)
     `).bind(
       id,
       sequenceId,
       position,
       data.delay_minutes || 0,
+      data.send_at_time || null,
       data.subject,
       data.preview_text || null,
       data.body_html,
@@ -257,9 +265,15 @@ export async function handleUpdateSequenceStep(sequenceId, stepId, request, env)
       return jsonResponse({ error: 'Step not found' }, 404);
     }
     
+    // Validate send_at_time format if provided
+    if (data.send_at_time && !/^\d{2}:\d{2}$/.test(data.send_at_time)) {
+      return jsonResponse({ error: 'send_at_time must be in HH:MM format (e.g., "07:00")' }, 400);
+    }
+    
     await env.DB.prepare(`
       UPDATE sequence_steps SET
         delay_minutes = COALESCE(?, delay_minutes),
+        send_at_time = COALESCE(?, send_at_time),
         subject = COALESCE(?, subject),
         preview_text = COALESCE(?, preview_text),
         body_html = COALESCE(?, body_html),
@@ -269,6 +283,7 @@ export async function handleUpdateSequenceStep(sequenceId, stepId, request, env)
       WHERE id = ?
     `).bind(
       data.delay_minutes,
+      data.send_at_time,
       data.subject,
       data.preview_text,
       data.body_html,
@@ -378,9 +393,16 @@ export async function handleEnrollInSequence(sequenceId, request, env) {
       ).bind(sequenceId, 'active').first();
       
       const now = new Date();
-      const nextSendAt = firstStep 
-        ? new Date(now.getTime() + (firstStep.delay_minutes || 0) * 60000).toISOString()
-        : null;
+      let nextSendAt;
+      
+      if (firstStep) {
+        // If first step has delay=0, send immediately, otherwise calculate based on send_at_time
+        if (firstStep.delay_minutes === 0) {
+          nextSendAt = now.toISOString();
+        } else {
+          nextSendAt = calculateNextSendAtForEnrollment(firstStep, sequence.send_timezone || 'America/Chicago');
+        }
+      }
       
       await env.DB.prepare(`
         UPDATE sequence_enrollments 
@@ -400,7 +422,14 @@ export async function handleEnrollInSequence(sequenceId, request, env) {
     }
     
     const now = new Date();
-    const nextSendAt = new Date(now.getTime() + (firstStep.delay_minutes || 0) * 60000).toISOString();
+    let nextSendAt;
+    
+    // If first step has delay=0, send immediately
+    if (firstStep.delay_minutes === 0) {
+      nextSendAt = now.toISOString();
+    } else {
+      nextSendAt = calculateNextSendAtForEnrollment(firstStep, sequence.send_timezone || 'America/Chicago');
+    }
     
     const enrollmentId = generateId();
     await env.DB.prepare(`
@@ -420,6 +449,50 @@ export async function handleEnrollInSequence(sequenceId, request, env) {
     console.error('Enroll in sequence error:', error);
     return jsonResponse({ error: 'Failed to enroll in sequence' }, 500);
   }
+}
+
+/**
+ * Calculate next send time for enrollment based on step configuration
+ */
+function calculateNextSendAtForEnrollment(step, timezone) {
+  const now = new Date();
+  
+  // If no send_at_time, use simple delay from now
+  if (!step.send_at_time) {
+    return new Date(now.getTime() + (step.delay_minutes || 0) * 60000).toISOString();
+  }
+  
+  // Parse send_at_time (format: "HH:MM" in 24h)
+  const [hours, minutes] = step.send_at_time.split(':').map(Number);
+  
+  // Calculate days to wait (delay_minutes / 1440 minutes per day, minimum 1 day if send_at_time is set)
+  const daysToWait = Math.max(1, Math.floor((step.delay_minutes || 1440) / 1440));
+  
+  // Start with today at the target time in UTC
+  let targetDate = new Date(now);
+  targetDate.setUTCHours(hours, minutes, 0, 0);
+  
+  // Adjust for timezone offset
+  const tzOffsets = {
+    'America/Chicago': 6,
+    'America/New_York': 5,
+    'America/Los_Angeles': 8,
+    'America/Denver': 7,
+    'UTC': 0
+  };
+  
+  const offsetHours = tzOffsets[timezone] || 0;
+  targetDate.setUTCHours(targetDate.getUTCHours() + offsetHours);
+  
+  // Add the days to wait
+  targetDate.setUTCDate(targetDate.getUTCDate() + daysToWait);
+  
+  // If the calculated time is still in the past, add another day
+  if (targetDate <= now) {
+    targetDate.setUTCDate(targetDate.getUTCDate() + 1);
+  }
+  
+  return targetDate.toISOString();
 }
 
 export async function handleGetSequenceEnrollments(sequenceId, request, env) {
@@ -469,6 +542,9 @@ export async function enrollInSequence(env, subscriptionId, sequenceId) {
     
     if (existing) return;
     
+    const sequence = await env.DB.prepare('SELECT * FROM sequences WHERE id = ?').bind(sequenceId).first();
+    if (!sequence) return;
+    
     const firstStep = await env.DB.prepare(
       'SELECT * FROM sequence_steps WHERE sequence_id = ? AND position = 1 AND status = ?'
     ).bind(sequenceId, 'active').first();
@@ -476,7 +552,14 @@ export async function enrollInSequence(env, subscriptionId, sequenceId) {
     if (!firstStep) return;
     
     const now = new Date();
-    const nextSendAt = new Date(now.getTime() + (firstStep.delay_minutes || 0) * 60000).toISOString();
+    let nextSendAt;
+    
+    // If first step has delay=0, send immediately
+    if (firstStep.delay_minutes === 0) {
+      nextSendAt = now.toISOString();
+    } else {
+      nextSendAt = calculateNextSendAtForEnrollment(firstStep, sequence.send_timezone || 'America/Chicago');
+    }
     
     await env.DB.prepare(`
       INSERT INTO sequence_enrollments (id, subscription_id, sequence_id, current_step, status, enrolled_at, next_send_at, created_at)

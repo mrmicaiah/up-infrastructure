@@ -247,23 +247,29 @@ export async function handleSendTestEmail(id, request, env) {
     }
 
     const email = await env.DB.prepare(
-      'SELECT e.*, l.from_name, l.from_email FROM emails e LEFT JOIN lists l ON e.list_id = l.id WHERE e.id = ?'
+      'SELECT e.*, l.from_name, l.from_email, l.campaign_template_id FROM emails e LEFT JOIN lists l ON e.list_id = l.id WHERE e.id = ?'
     ).bind(id).first();
 
     if (!email) {
       return jsonResponse({ error: 'Email not found' }, 404);
     }
 
+    // Fetch campaign template if list has one
+    let template = null;
+    if (email.campaign_template_id) {
+      template = await env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(email.campaign_template_id).first();
+    }
+
     const fakeSubscriber = { name: 'Test User', email: testEmail };
     const fakeSendId = 'test-' + generateId();
     const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
     
-    const renderedHtml = renderEmail(email, fakeSubscriber, fakeSendId, baseUrl, email);
+    const renderedHtml = renderEmail(email, fakeSubscriber, fakeSendId, baseUrl, email, template);
     
     const messageId = await sendEmailViaSES(
       env, 
       testEmail, 
-      `[TEST] ${email.subject}`, 
+      '[TEST] ' + email.subject, 
       renderedHtml, 
       email.body_text,
       email.from_name,
@@ -274,7 +280,8 @@ export async function handleSendTestEmail(id, request, env) {
       success: true, 
       message: 'Test email sent',
       to: testEmail,
-      ses_message_id: messageId
+      ses_message_id: messageId,
+      used_template: template ? template.name : null
     });
   } catch (error) {
     console.error('Send test email error:', error);
@@ -285,7 +292,7 @@ export async function handleSendTestEmail(id, request, env) {
 export async function handleSendEmail(id, request, env) {
   try {
     const email = await env.DB.prepare(
-      'SELECT e.*, l.from_name, l.from_email FROM emails e LEFT JOIN lists l ON e.list_id = l.id WHERE e.id = ?'
+      'SELECT e.*, l.from_name, l.from_email, l.campaign_template_id FROM emails e LEFT JOIN lists l ON e.list_id = l.id WHERE e.id = ?'
     ).bind(id).first();
 
     if (!email) {
@@ -294,6 +301,12 @@ export async function handleSendEmail(id, request, env) {
 
     if (email.status === 'sent') {
       return jsonResponse({ error: 'Email already sent' }, 400);
+    }
+
+    // Fetch campaign template if list has one
+    let template = null;
+    if (email.campaign_template_id) {
+      template = await env.DB.prepare('SELECT * FROM templates WHERE id = ?').bind(email.campaign_template_id).first();
     }
 
     let subscribers;
@@ -327,7 +340,7 @@ export async function handleSendEmail(id, request, env) {
     for (const subscriber of subscribers.results) {
       try {
         const sendId = generateId();
-        const renderedHtml = renderEmail(email, subscriber, sendId, baseUrl, email);
+        const renderedHtml = renderEmail(email, subscriber, sendId, baseUrl, email, template);
         
         const messageId = await sendEmailViaSES(
           env, 
@@ -348,7 +361,7 @@ export async function handleSendEmail(id, request, env) {
       } catch (e) {
         failed++;
         errors.push({ email: subscriber.email, error: e.message });
-        console.error(`Failed to send to ${subscriber.email}:`, e);
+        console.error('Failed to send to ' + subscriber.email + ':', e);
       }
     }
 
@@ -362,6 +375,7 @@ export async function handleSendEmail(id, request, env) {
       sent,
       failed,
       total: subscribers.results.length,
+      used_template: template ? template.name : null,
       errors: errors.length > 0 ? errors.slice(0, 10) : undefined
     });
   } catch (error) {

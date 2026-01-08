@@ -14,7 +14,7 @@ export async function processSequenceEmails(env) {
       SELECT e.id as enrollment_id, e.sequence_id, e.current_step, e.subscription_id,
              ss.id as step_id, ss.subject, ss.preview_text, ss.body_html, ss.body_text, ss.delay_minutes,
              sub.lead_id, l.email, l.name,
-             seq.list_id, lst.from_name, lst.from_email
+             seq.list_id, lst.from_name, lst.from_email, lst.sequence_template_id
       FROM sequence_enrollments e
       JOIN sequence_steps ss ON ss.sequence_id = e.sequence_id AND ss.position = e.current_step + 1
       JOIN subscriptions sub ON sub.id = e.subscription_id
@@ -36,9 +36,23 @@ export async function processSequenceEmails(env) {
     
     const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
     
+    // Cache templates to avoid repeated lookups
+    const templateCache = {};
+    
     for (const enrollment of due.results) {
       results.processed++;
       try {
+        // Fetch sequence template if list has one (with caching)
+        let template = null;
+        if (enrollment.sequence_template_id) {
+          if (!templateCache[enrollment.sequence_template_id]) {
+            templateCache[enrollment.sequence_template_id] = await env.DB.prepare(
+              'SELECT * FROM templates WHERE id = ?'
+            ).bind(enrollment.sequence_template_id).first();
+          }
+          template = templateCache[enrollment.sequence_template_id];
+        }
+        
         const sendId = generateId();
         const subscriber = { email: enrollment.email, name: enrollment.name };
         const emailObj = {
@@ -51,7 +65,7 @@ export async function processSequenceEmails(env) {
           from_email: enrollment.from_email
         };
         
-        const renderedHtml = renderEmail(emailObj, subscriber, sendId, baseUrl, list);
+        const renderedHtml = renderEmail(emailObj, subscriber, sendId, baseUrl, list, template);
         
         await sendEmailViaSES(
           env,

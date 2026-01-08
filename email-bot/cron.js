@@ -5,6 +5,56 @@
 import { generateId, sendEmailViaSES, renderEmail, jsonResponse } from './lib.js';
 import { handleSendEmail } from './handlers-emails.js';
 
+/**
+ * Calculate the next send time based on step configuration
+ * @param {Object} step - The sequence step with delay_minutes and optional send_at_time
+ * @param {string} timezone - Timezone string like "America/Chicago" (defaults to UTC)
+ * @returns {string} ISO timestamp for next send
+ */
+function calculateNextSendAt(step, timezone) {
+  const now = new Date();
+  
+  // If no send_at_time, use simple delay from now
+  if (!step.send_at_time) {
+    return new Date(now.getTime() + (step.delay_minutes || 0) * 60000).toISOString();
+  }
+  
+  // Parse send_at_time (format: "HH:MM" in 24h)
+  const [hours, minutes] = step.send_at_time.split(':').map(Number);
+  
+  // Calculate days to wait (delay_minutes / 1440 minutes per day, minimum 1 day if send_at_time is set)
+  const daysToWait = Math.max(1, Math.floor((step.delay_minutes || 1440) / 1440));
+  
+  // Start with today at the target time in UTC
+  // We'll adjust for timezone by converting the target time
+  let targetDate = new Date(now);
+  targetDate.setUTCHours(hours, minutes, 0, 0);
+  
+  // Adjust for timezone offset
+  // For America/Chicago (CST/CDT), offset is -6 or -5 hours
+  // We need to ADD the offset to convert local time to UTC
+  const tzOffsets = {
+    'America/Chicago': 6,    // CST (winter) - add 6 hours to get UTC
+    'America/New_York': 5,   // EST
+    'America/Los_Angeles': 8, // PST
+    'America/Denver': 7,     // MST
+    'UTC': 0
+  };
+  
+  const offsetHours = tzOffsets[timezone] || 0;
+  targetDate.setUTCHours(targetDate.getUTCHours() + offsetHours);
+  
+  // Add the days to wait
+  targetDate.setUTCDate(targetDate.getUTCDate() + daysToWait);
+  
+  // If the calculated time is still in the past (edge case), add another day
+  if (targetDate <= now) {
+    targetDate.setUTCDate(targetDate.getUTCDate() + 1);
+  }
+  
+  return targetDate.toISOString();
+}
+
 export async function processSequenceEmails(env) {
   const results = { processed: 0, sent: 0, failed: 0, errors: [] };
   
@@ -12,9 +62,9 @@ export async function processSequenceEmails(env) {
     // Use strftime to get ISO format for proper comparison with stored timestamps
     const due = await env.DB.prepare(`
       SELECT e.id as enrollment_id, e.sequence_id, e.current_step, e.subscription_id,
-             ss.id as step_id, ss.subject, ss.preview_text, ss.body_html, ss.body_text, ss.delay_minutes,
+             ss.id as step_id, ss.subject, ss.preview_text, ss.body_html, ss.body_text, ss.delay_minutes, ss.send_at_time,
              sub.lead_id, l.email, l.name,
-             seq.list_id, lst.from_name, lst.from_email, lst.sequence_template_id
+             seq.list_id, seq.send_timezone, lst.from_name, lst.from_email, lst.sequence_template_id
       FROM sequence_enrollments e
       JOIN sequence_steps ss ON ss.sequence_id = e.sequence_id AND ss.position = e.current_step + 1
       JOIN subscriptions sub ON sub.id = e.subscription_id
@@ -78,19 +128,21 @@ export async function processSequenceEmails(env) {
         );
         
         // For sequence emails, don't use foreign key - just log the send
-        // We store step_id in a separate column (or just track via enrollment)
         await env.DB.prepare(`
           INSERT INTO email_sends (id, email_id, lead_id, subscription_id, status, created_at)
           VALUES (?, NULL, ?, ?, 'sent', ?)
         `).bind(sendId, enrollment.lead_id, enrollment.subscription_id, new Date().toISOString()).run();
         
+        // Check for next step
         const nextStep = await env.DB.prepare(`
           SELECT * FROM sequence_steps 
           WHERE sequence_id = ? AND position = ? AND status = 'active'
         `).bind(enrollment.sequence_id, enrollment.current_step + 2).first();
         
         if (nextStep) {
-          const nextSendAt = new Date(Date.now() + nextStep.delay_minutes * 60000).toISOString();
+          // Calculate next send time using the step's send_at_time if available
+          const nextSendAt = calculateNextSendAt(nextStep, enrollment.send_timezone || 'America/Chicago');
+          
           await env.DB.prepare(`
             UPDATE sequence_enrollments 
             SET current_step = current_step + 1, next_send_at = ?
@@ -175,9 +227,11 @@ export async function handleProcessSequences(request, env) {
         ss.position as step_position,
         ss.status as step_status,
         ss.subject,
+        ss.send_at_time,
         sub.status as subscription_status,
         l.email,
-        seq.status as sequence_status
+        seq.status as sequence_status,
+        seq.send_timezone
       FROM sequence_enrollments e
       LEFT JOIN sequence_steps ss ON ss.sequence_id = e.sequence_id AND ss.position = e.current_step + 1
       LEFT JOIN subscriptions sub ON sub.id = e.subscription_id

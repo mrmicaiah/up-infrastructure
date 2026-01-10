@@ -2,8 +2,13 @@
  * Legacy handlers - backward compatible endpoints
  */
 
-import { generateId, jsonResponse, isValidEmail, isDisposableEmail, sanitizeString, sendEmailViaSES } from './lib.js';
+import { generateId, jsonResponse, isValidEmail, isDisposableEmail, sanitizeString, sendEmailViaSES, appendToGoogleSheet } from './lib.js';
 import { enrollInSequence } from './handlers-sequences.js';
+
+// Meet the Contractors spreadsheet config
+const MTC_SPREADSHEET_ID = '1sfkuhw2k4sgM5EOEwFK4uthax77qLBX1';
+const MTC_VENDOR_SLUG = 'meet-the-contractors-vendors';
+const MTC_COORDINATOR_SLUG = 'meet-the-contractors-coordinators';
 
 // Send lead notification email to list owner
 async function sendLeadNotification(env, list, lead, subscription) {
@@ -63,6 +68,44 @@ async function sendLeadNotification(env, list, lead, subscription) {
   }
 }
 
+// Append lead to Meet the Contractors Google Sheet
+async function appendToMTCSheet(env, listSlug, lead, metadata) {
+  try {
+    const now = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
+    const fields = metadata || {};
+    
+    if (listSlug === MTC_VENDOR_SLUG) {
+      // Vendor sheet columns: Date, First Name, Last Name, Company, Email, Phone, Services
+      const rowData = [
+        now,
+        fields.first_name || '',
+        fields.last_name || '',
+        fields.company_name || '',
+        lead.email,
+        fields.phone || '',
+        fields.services || ''
+      ];
+      await appendToGoogleSheet(env, MTC_SPREADSHEET_ID, 'Vendors', rowData);
+    } else if (listSlug === MTC_COORDINATOR_SLUG) {
+      // Coordinator sheet columns: Date, First Name, Last Name, Email, Phone, Availability, Experience, Interests
+      const rowData = [
+        now,
+        fields.first_name || '',
+        fields.last_name || '',
+        lead.email,
+        fields.phone || '',
+        fields.availability || '',
+        fields.experience || '',
+        fields.interests || ''
+      ];
+      await appendToGoogleSheet(env, MTC_SPREADSHEET_ID, 'Coordinators', rowData);
+    }
+  } catch (error) {
+    console.error('Failed to append to MTC sheet:', error);
+    // Don't throw - sheet failure shouldn't break subscription
+  }
+}
+
 export async function handleSubscribe(request, env) {
   try {
     const contentType = request.headers.get('Content-Type');
@@ -77,11 +120,14 @@ export async function handleSubscribe(request, env) {
       return jsonResponse({ error: 'Invalid JSON' }, 400, request);
     }
     
+    // Support both 'list' and 'listId' for backward compatibility
+    const listSlug = data.list || data.listId;
+    
     if (!data.email || typeof data.email !== 'string') {
       return jsonResponse({ error: 'Email required' }, 400, request);
     }
     
-    if (!data.list) {
+    if (!listSlug) {
       return jsonResponse({ error: 'List slug required' }, 400, request);
     }
     
@@ -96,7 +142,7 @@ export async function handleSubscribe(request, env) {
     }
     
     const list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ? AND status = ?')
-      .bind(data.list, 'active').first();
+      .bind(listSlug, 'active').first();
     
     if (!list) {
       return jsonResponse({ error: 'List not found' }, 404, request);
@@ -104,9 +150,17 @@ export async function handleSubscribe(request, env) {
     
     const now = new Date().toISOString();
     
+    // Handle fields from form submissions (Meet the Contractors style)
+    const formFields = data.fields || {};
+    const leadName = data.name || (formFields.first_name && formFields.last_name ? `${formFields.first_name} ${formFields.last_name}` : formFields.first_name) || null;
+    
     let lead = await env.DB.prepare('SELECT * FROM leads WHERE email = ?').bind(email).first();
     let leadId;
     let isNewLead = false;
+    
+    // Merge form fields into metadata
+    const metadataObj = { ...(data.metadata || {}), ...formFields };
+    const metadataJson = Object.keys(metadataObj).length > 0 ? JSON.stringify(metadataObj) : null;
     
     if (!lead) {
       isNewLead = true;
@@ -115,12 +169,12 @@ export async function handleSubscribe(request, env) {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         email,
-        sanitizeString(data.name, 100),
-        sanitizeString(data.source, 50) || data.list,
+        sanitizeString(leadName, 100),
+        sanitizeString(data.source, 50) || listSlug,
         sanitizeString(data.funnel, 50),
         sanitizeString(data.segment, 50),
         Array.isArray(data.tags) ? JSON.stringify(data.tags.slice(0, 20).map(t => sanitizeString(t, 30))) : null,
-        data.metadata ? JSON.stringify(data.metadata) : null,
+        metadataJson,
         request.cf?.country || null,
         now,
         now
@@ -137,8 +191,7 @@ export async function handleSubscribe(request, env) {
       
       // Merge metadata
       const existingMetadata = lead.metadata ? JSON.parse(lead.metadata) : {};
-      const newMetadata = data.metadata || {};
-      const mergedMetadata = { ...existingMetadata, ...newMetadata };
+      const mergedMetadata = { ...existingMetadata, ...metadataObj };
       
       await env.DB.prepare(`
         UPDATE leads SET
@@ -148,7 +201,7 @@ export async function handleSubscribe(request, env) {
           updated_at = ?
         WHERE id = ?
       `).bind(
-        data.name || null, 
+        leadName || null, 
         JSON.stringify(mergedTags), 
         Object.keys(mergedMetadata).length > 0 ? JSON.stringify(mergedMetadata) : null,
         now, 
@@ -180,7 +233,7 @@ export async function handleSubscribe(request, env) {
       isNew = true;
       subscriptionId = generateId();
       
-      const source = sanitizeString(data.source, 50) || data.list;
+      const source = sanitizeString(data.source, 50) || listSlug;
       const funnel = sanitizeString(data.funnel, 50);
       
       await env.DB.prepare(`
@@ -207,9 +260,14 @@ export async function handleSubscribe(request, env) {
       if (list.notify_email) {
         await sendLeadNotification(env, list, lead, subscription);
       }
+      
+      // Append to Meet the Contractors Google Sheet if applicable
+      if (listSlug === MTC_VENDOR_SLUG || listSlug === MTC_COORDINATOR_SLUG) {
+        await appendToMTCSheet(env, listSlug, lead, formFields);
+      }
     }
     
-    await logTouch(env, leadId, data.source || data.list, data.funnel);
+    await logTouch(env, leadId, data.source || listSlug, data.funnel);
     
     return jsonResponse({
       success: true,

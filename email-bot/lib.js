@@ -7,13 +7,15 @@
 export const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-MTC-Password',
 };
 
 export const ALLOWED_ORIGINS = [
   'https://untitledpublishers.com',
   'https://www.untitledpublishers.com',
   'https://proverbs.untitledpublishers.com',
+  'https://contractorsparty.com',
+  'https://www.contractorsparty.com',
   'http://localhost:3000',
   'http://127.0.0.1:5500',
 ];
@@ -121,111 +123,6 @@ export async function sendEmailViaSES(env, to, subject, htmlBody, textBody, from
     throw new Error('Resend Error: ' + response.status + ' - ' + (result.message || JSON.stringify(result)));
   }
   return result.id;
-}
-
-// ==================== GOOGLE SHEETS ====================
-
-/**
- * Get Google OAuth access token using service account
- */
-async function getGoogleAccessToken(env) {
-  if (!env.GOOGLE_SERVICE_ACCOUNT_JSON) {
-    throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON not configured');
-  }
-  
-  const serviceAccount = JSON.parse(env.GOOGLE_SERVICE_ACCOUNT_JSON);
-  
-  // Create JWT header and claim set
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const now = Math.floor(Date.now() / 1000);
-  const claimSet = {
-    iss: serviceAccount.client_email,
-    scope: 'https://www.googleapis.com/auth/spreadsheets',
-    aud: 'https://oauth2.googleapis.com/token',
-    exp: now + 3600,
-    iat: now
-  };
-  
-  // Base64url encode
-  const base64url = (obj) => btoa(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  
-  const signatureInput = base64url(header) + '.' + base64url(claimSet);
-  
-  // Import private key and sign
-  const privateKeyPem = serviceAccount.private_key;
-  const pemContents = privateKeyPem.replace(/-----BEGIN PRIVATE KEY-----/, '').replace(/-----END PRIVATE KEY-----/, '').replace(/\s/g, '');
-  const binaryKey = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
-  
-  const cryptoKey = await crypto.subtle.importKey(
-    'pkcs8',
-    binaryKey,
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    cryptoKey,
-    new TextEncoder().encode(signatureInput)
-  );
-  
-  const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
-  
-  const jwt = signatureInput + '.' + signatureBase64;
-  
-  // Exchange JWT for access token
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-  });
-  
-  const tokenData = await tokenResponse.json();
-  if (!tokenResponse.ok) {
-    throw new Error('Failed to get Google access token: ' + JSON.stringify(tokenData));
-  }
-  
-  return tokenData.access_token;
-}
-
-/**
- * Append a row to a Google Sheet
- * @param {object} env - Environment with GOOGLE_SERVICE_ACCOUNT_JSON
- * @param {string} spreadsheetId - The Google Sheet ID
- * @param {string} sheetName - The sheet/tab name
- * @param {array} rowData - Array of values for the row
- */
-export async function appendToGoogleSheet(env, spreadsheetId, sheetName, rowData) {
-  try {
-    const accessToken = await getGoogleAccessToken(env);
-    
-    const range = `${sheetName}!A:Z`;
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
-    
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        values: [rowData]
-      })
-    });
-    
-    const result = await response.json();
-    if (!response.ok) {
-      console.error('Google Sheets Error:', result);
-      throw new Error('Google Sheets Error: ' + JSON.stringify(result));
-    }
-    
-    return result;
-  } catch (error) {
-    console.error('Failed to append to Google Sheet:', error);
-    // Don't throw - sheet append failure shouldn't break subscription
-  }
 }
 
 // ==================== EMAIL RENDERING ====================

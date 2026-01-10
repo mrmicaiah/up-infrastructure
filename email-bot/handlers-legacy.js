@@ -2,13 +2,8 @@
  * Legacy handlers - backward compatible endpoints
  */
 
-import { generateId, jsonResponse, isValidEmail, isDisposableEmail, sanitizeString, sendEmailViaSES, appendToGoogleSheet } from './lib.js';
+import { generateId, jsonResponse, isValidEmail, isDisposableEmail, sanitizeString, sendEmailViaSES } from './lib.js';
 import { enrollInSequence } from './handlers-sequences.js';
-
-// Meet the Contractors spreadsheet config
-const MTC_SPREADSHEET_ID = '1sfkuhw2k4sgM5EOEwFK4uthax77qLBX1';
-const MTC_VENDOR_SLUG = 'meet-the-contractors-vendors';
-const MTC_COORDINATOR_SLUG = 'meet-the-contractors-coordinators';
 
 // Send lead notification email to list owner
 async function sendLeadNotification(env, list, lead, subscription) {
@@ -65,44 +60,6 @@ async function sendLeadNotification(env, list, lead, subscription) {
   } catch (error) {
     console.error('Failed to send lead notification:', error);
     // Don't throw - notification failure shouldn't break subscription
-  }
-}
-
-// Append lead to Meet the Contractors Google Sheet
-async function appendToMTCSheet(env, listSlug, lead, metadata) {
-  try {
-    const now = new Date().toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' });
-    const fields = metadata || {};
-    
-    if (listSlug === MTC_VENDOR_SLUG) {
-      // Vendor sheet columns: Date, First Name, Last Name, Company, Email, Phone, Services
-      const rowData = [
-        now,
-        fields.first_name || '',
-        fields.last_name || '',
-        fields.company_name || '',
-        lead.email,
-        fields.phone || '',
-        fields.services || ''
-      ];
-      await appendToGoogleSheet(env, MTC_SPREADSHEET_ID, 'Vendors', rowData);
-    } else if (listSlug === MTC_COORDINATOR_SLUG) {
-      // Coordinator sheet columns: Date, First Name, Last Name, Email, Phone, Availability, Experience, Interests
-      const rowData = [
-        now,
-        fields.first_name || '',
-        fields.last_name || '',
-        lead.email,
-        fields.phone || '',
-        fields.availability || '',
-        fields.experience || '',
-        fields.interests || ''
-      ];
-      await appendToGoogleSheet(env, MTC_SPREADSHEET_ID, 'Coordinators', rowData);
-    }
-  } catch (error) {
-    console.error('Failed to append to MTC sheet:', error);
-    // Don't throw - sheet failure shouldn't break subscription
   }
 }
 
@@ -259,11 +216,6 @@ export async function handleSubscribe(request, env) {
       // Send lead notification if configured
       if (list.notify_email) {
         await sendLeadNotification(env, list, lead, subscription);
-      }
-      
-      // Append to Meet the Contractors Google Sheet if applicable
-      if (listSlug === MTC_VENDOR_SLUG || listSlug === MTC_COORDINATOR_SLUG) {
-        await appendToMTCSheet(env, listSlug, lead, formFields);
       }
     }
     

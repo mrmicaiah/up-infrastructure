@@ -18,6 +18,10 @@ import { handleSubscribe, handleLeadCapture, handleGetLeads, handleExportLeads, 
 import { processSequenceEmails, processScheduledCampaigns, handleProcessSequences } from './cron.js';
 import { handleGetPublicPosts, handleGetPublicPost, handleGetPublicCategories, handleGetRSSFeed, handleGetPosts, handleGetPost, handleCreatePost, handleUpdatePost, handleDeletePost, handlePublishPost, handleSchedulePost, handleUnpublishPost, processScheduledPosts } from './handlers-blog.js';
 
+// Meet the Contractors config
+const MTC_PASSWORD = 'contractors2026';
+const MTC_ALLOWED_LISTS = ['meet-the-contractors-vendors', 'meet-the-contractors-coordinators'];
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -81,6 +85,81 @@ export default {
     }
     if (url.pathname === '/api/blog/feed' && request.method === 'GET') {
       return handleGetRSSFeed(request, env);
+    }
+
+    // === MEET THE CONTRACTORS DASHBOARD (password-protected, not API key) ===
+    if (url.pathname === '/api/mtc/verify' && request.method === 'POST') {
+      try {
+        const data = await request.json();
+        // Check KV for custom password first, fallback to default
+        const customPassword = await env.KV?.get('mtc_password');
+        const password = customPassword || MTC_PASSWORD;
+        
+        if (data.password === password) {
+          return jsonResponse({ success: true }, 200, request);
+        }
+        return jsonResponse({ error: 'Invalid password' }, 401, request);
+      } catch {
+        return jsonResponse({ error: 'Invalid request' }, 400, request);
+      }
+    }
+    
+    if (url.pathname === '/api/mtc/leads' && request.method === 'GET') {
+      // Verify password from header
+      const password = request.headers.get('X-MTC-Password');
+      const customPassword = await env.KV?.get('mtc_password');
+      const validPassword = customPassword || MTC_PASSWORD;
+      
+      if (password !== validPassword) {
+        return jsonResponse({ error: 'Unauthorized' }, 401, request);
+      }
+      
+      const listSlug = url.searchParams.get('list');
+      if (!listSlug || !MTC_ALLOWED_LISTS.includes(listSlug)) {
+        return jsonResponse({ error: 'Invalid list' }, 400, request);
+      }
+      
+      // Get list
+      const list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listSlug).first();
+      if (!list) {
+        return jsonResponse({ error: 'List not found' }, 404, request);
+      }
+      
+      // Get subscribers with lead data and metadata
+      const results = await env.DB.prepare(`
+        SELECT s.id as subscription_id, s.subscribed_at, s.source, s.funnel,
+               l.id as lead_id, l.email, l.name, l.metadata
+        FROM subscriptions s
+        JOIN leads l ON s.lead_id = l.id
+        WHERE s.list_id = ? AND s.status = 'active'
+        ORDER BY s.subscribed_at DESC
+        LIMIT 500
+      `).bind(list.id).all();
+      
+      return jsonResponse({ subscribers: results.results }, 200, request);
+    }
+    
+    if (url.pathname === '/api/mtc/password' && request.method === 'POST') {
+      // Change password - requires current password
+      try {
+        const data = await request.json();
+        const currentPassword = request.headers.get('X-MTC-Password');
+        const customPassword = await env.KV?.get('mtc_password');
+        const validPassword = customPassword || MTC_PASSWORD;
+        
+        if (currentPassword !== validPassword) {
+          return jsonResponse({ error: 'Unauthorized' }, 401, request);
+        }
+        
+        if (!data.newPassword || data.newPassword.length < 6) {
+          return jsonResponse({ error: 'Password must be at least 6 characters' }, 400, request);
+        }
+        
+        await env.KV.put('mtc_password', data.newPassword);
+        return jsonResponse({ success: true, message: 'Password updated' }, 200, request);
+      } catch {
+        return jsonResponse({ error: 'Invalid request' }, 400, request);
+      }
     }
 
     // === PROTECTED ENDPOINTS ===

@@ -73,9 +73,7 @@ export default {
     }
     if (url.pathname.match(/^\/api\/blog\/posts\/[a-zA-Z0-9-]+$/) && request.method === 'GET') {
       const slug = url.pathname.split('/').pop();
-      // Check if it looks like a UUID (admin request) vs slug (public request)
       if (slug.match(/^[a-f0-9-]{36}$/)) {
-        // This is an admin request by ID, needs auth - fall through to protected section
       } else {
         return handleGetPublicPost(slug, request, env);
       }
@@ -87,11 +85,10 @@ export default {
       return handleGetRSSFeed(request, env);
     }
 
-    // === MEET THE CONTRACTORS DASHBOARD (password-protected, not API key) ===
+    // === MEET THE CONTRACTORS DASHBOARD ===
     if (url.pathname === '/api/mtc/verify' && request.method === 'POST') {
       try {
         const data = await request.json();
-        // Check KV for custom password first, fallback to default
         const customPassword = await env.KV?.get('mtc_password');
         const password = customPassword || MTC_PASSWORD;
         
@@ -105,7 +102,6 @@ export default {
     }
     
     if (url.pathname === '/api/mtc/leads' && request.method === 'GET') {
-      // Verify password from header
       const password = request.headers.get('X-MTC-Password');
       const customPassword = await env.KV?.get('mtc_password');
       const validPassword = customPassword || MTC_PASSWORD;
@@ -119,13 +115,11 @@ export default {
         return jsonResponse({ error: 'Invalid list' }, 400, request);
       }
       
-      // Get list
       const list = await env.DB.prepare('SELECT * FROM lists WHERE slug = ?').bind(listSlug).first();
       if (!list) {
         return jsonResponse({ error: 'List not found' }, 404, request);
       }
       
-      // Get subscribers with lead data and metadata
       const results = await env.DB.prepare(`
         SELECT s.id as subscription_id, s.subscribed_at, s.source, s.funnel,
                l.id as lead_id, l.email, l.name, l.metadata
@@ -139,8 +133,49 @@ export default {
       return jsonResponse({ subscribers: results.results }, 200, request);
     }
     
+    if (url.pathname === '/api/mtc/update-status' && request.method === 'POST') {
+      try {
+        const password = request.headers.get('X-MTC-Password');
+        const customPassword = await env.KV?.get('mtc_password');
+        const validPassword = customPassword || MTC_PASSWORD;
+        
+        if (password !== validPassword) {
+          return jsonResponse({ error: 'Unauthorized' }, 401, request);
+        }
+        
+        const data = await request.json();
+        const { email, list, paid } = data;
+        
+        if (!email || !list || !MTC_ALLOWED_LISTS.includes(list)) {
+          return jsonResponse({ error: 'Invalid request' }, 400, request);
+        }
+        
+        const lead = await env.DB.prepare('SELECT * FROM leads WHERE email = ?').bind(email).first();
+        if (!lead) {
+          return jsonResponse({ error: 'Lead not found' }, 404, request);
+        }
+        
+        let metadata = {};
+        try {
+          metadata = lead.metadata ? JSON.parse(lead.metadata) : {};
+        } catch {
+          metadata = {};
+        }
+        
+        metadata.paid = paid === true;
+        
+        await env.DB.prepare('UPDATE leads SET metadata = ? WHERE id = ?')
+          .bind(JSON.stringify(metadata), lead.id)
+          .run();
+        
+        return jsonResponse({ success: true, paid: metadata.paid }, 200, request);
+      } catch (error) {
+        console.error('Update status error:', error);
+        return jsonResponse({ error: 'Failed to update status' }, 500, request);
+      }
+    }
+    
     if (url.pathname === '/api/mtc/password' && request.method === 'POST') {
-      // Change password - requires current password
       try {
         const data = await request.json();
         const currentPassword = request.headers.get('X-MTC-Password');

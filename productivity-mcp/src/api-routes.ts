@@ -212,6 +212,118 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ success: true, message: 'Messages marked as read' });
         }
 
+        // ==================== SCRATCHPAD ====================
+        
+        // GET scratchpad items
+        if (path === '/scratchpad' && method === 'GET') {
+          const items = await db.prepare(`
+            SELECT * FROM scratchpad 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+          `).bind(userId).all();
+          
+          return jsonResponse({ items: items.results || [] });
+        }
+
+        // POST to scratchpad
+        if (path === '/scratchpad' && method === 'POST') {
+          const body = await request.json() as any;
+          const { text } = body;
+          if (!text?.trim()) return jsonResponse({ error: 'Text required' }, 400);
+          
+          const id = crypto.randomUUID();
+          await db.prepare(`
+            INSERT INTO scratchpad (id, user_id, text, created_at) 
+            VALUES (?, ?, ?, datetime('now'))
+          `).bind(id, userId, text.trim()).run();
+          
+          return jsonResponse({ success: true, id });
+        }
+
+        // Process scratchpad item
+        const scratchProcessMatch = path.match(/^\/scratchpad\/([^/]+)\/process$/);
+        if (scratchProcessMatch && method === 'POST') {
+          const itemId = scratchProcessMatch[1];
+          const body = await request.json() as any;
+          const { action } = body; // 'activate', 'task', or 'delete'
+          
+          const item = await db.prepare('SELECT * FROM scratchpad WHERE id = ? AND user_id = ?').bind(itemId, userId).first();
+          if (!item) return jsonResponse({ error: 'Item not found' }, 404);
+          
+          if (action === 'delete') {
+            await db.prepare('DELETE FROM scratchpad WHERE id = ?').bind(itemId).run();
+            return jsonResponse({ success: true, message: 'Deleted' });
+          }
+          
+          // Create task from scratchpad item
+          const taskId = crypto.randomUUID();
+          await db.prepare(`
+            INSERT INTO tasks (id, user_id, text, category, priority, status, is_active, created_at, last_touched) 
+            VALUES (?, ?, ?, 'General', 3, 'open', ?, datetime('now'), datetime('now'))
+          `).bind(taskId, userId, item.text, action === 'activate' ? 1 : 0).run();
+          
+          // Delete from scratchpad
+          await db.prepare('DELETE FROM scratchpad WHERE id = ?').bind(itemId).run();
+          
+          return jsonResponse({ success: true, taskId, message: action === 'activate' ? 'Task activated' : 'Task created' });
+        }
+
+        // ==================== NOTES ====================
+        
+        // GET notes
+        if (path === '/notes' && method === 'GET') {
+          const notes = await db.prepare(`
+            SELECT * FROM notes 
+            WHERE user_id = ? 
+            ORDER BY created_at DESC
+          `).bind(userId).all();
+          
+          return jsonResponse({ notes: notes.results || [] });
+        }
+
+        // POST note
+        if (path === '/notes' && method === 'POST') {
+          const body = await request.json() as any;
+          const { title, content, category } = body;
+          if (!title?.trim()) return jsonResponse({ error: 'Title required' }, 400);
+          
+          const id = crypto.randomUUID();
+          await db.prepare(`
+            INSERT INTO notes (id, user_id, title, content, category, created_at) 
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+          `).bind(id, userId, title.trim(), content || '', category || 'General').run();
+          
+          return jsonResponse({ success: true, id });
+        }
+
+        // DELETE note
+        const noteDeleteMatch = path.match(/^\/notes\/([^/]+)$/);
+        if (noteDeleteMatch && method === 'DELETE') {
+          const noteId = noteDeleteMatch[1];
+          await db.prepare('DELETE FROM notes WHERE id = ? AND user_id = ?').bind(noteId, userId).run();
+          return jsonResponse({ success: true, message: 'Note deleted' });
+        }
+
+        // ==================== ORPHANS ====================
+        
+        // GET orphans (tasks without category, project, objective, not active)
+        if (path === '/orphans' && method === 'GET') {
+          const orphans = await db.prepare(`
+            SELECT * FROM tasks 
+            WHERE user_id = ? 
+              AND status = 'open' 
+              AND is_active = 0
+              AND objective_id IS NULL
+              AND assigned_by IS NULL
+              AND (category IS NULL OR category = '' OR category = 'General')
+              AND (project IS NULL OR project = '')
+            ORDER BY created_at DESC
+            LIMIT 20
+          `).bind(userId).all();
+          
+          return jsonResponse({ tasks: orphans.results || [] });
+        }
+
         // TASKS LIST
         if (path === '/tasks' && method === 'GET') {
           const status = url.searchParams.get('status') || 'open';
@@ -257,6 +369,14 @@ export function createApiRoutes(env: Env) {
           const taskId = deactivateMatch[1];
           await db.prepare(`UPDATE tasks SET is_active = 0, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
           return jsonResponse({ success: true, message: 'Task deactivated' });
+        }
+
+        // RESTORE TASK (from completed)
+        const restoreMatch = path.match(/^\/tasks\/([^/]+)\/restore$/);
+        if (restoreMatch && method === 'POST') {
+          const taskId = restoreMatch[1];
+          await db.prepare(`UPDATE tasks SET status = 'open', completed_at = NULL, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
+          return jsonResponse({ success: true, message: 'Task restored' });
         }
 
         // CLAIM TASK - Accept an incoming task (clears assigned_by)

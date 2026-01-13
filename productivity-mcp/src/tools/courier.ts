@@ -774,14 +774,39 @@ export function registerCourierTools(ctx: ToolContext) {
       }
       
       let out = `👥 **Subscribers** (${subscribers.length})\n\n`;
-      for (const s of subscribers.slice(0, 20)) {
+      for (const s of subscribers.slice(0, 30)) {
         out += `• ${s.name || '(no name)'} <${s.email}>\n`;
+        out += `  Sub ID: ${s.subscription_id || s.id}\n`;
       }
-      if (subscribers.length > 20) {
-        out += `\n... and ${subscribers.length - 20} more`;
+      if (subscribers.length > 30) {
+        out += `\n... and ${subscribers.length - 30} more`;
       }
       
       return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("courier_delete_subscriber", {
+    subscription_id: z.string().optional().describe("Subscription ID to delete"),
+    subscription_ids: z.array(z.string()).optional().describe("Multiple subscription IDs to delete"),
+    permanent: z.boolean().optional().default(false).describe("Permanently delete (true) or just unsubscribe (false)"),
+  }, async ({ subscription_id, subscription_ids, permanent }) => {
+    try {
+      const ids = subscription_ids || (subscription_id ? [subscription_id] : []);
+      
+      if (!ids.length) {
+        return { content: [{ type: "text", text: "⛔ Provide subscription_id or subscription_ids" }] };
+      }
+      
+      const result: any = await courierRequest(env, '/api/subscribers/delete', 'POST', {
+        subscription_ids: ids,
+        permanent,
+      });
+      
+      const action = permanent ? 'permanently deleted' : 'unsubscribed';
+      return { content: [{ type: "text", text: `✅ ${result.deleted} subscriber(s) ${action}` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
     }

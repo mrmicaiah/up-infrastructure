@@ -13,6 +13,9 @@
 | `sprints` | Time-boxed work periods | user_id, name, end_date, status |
 | `objectives` | "Pushing for" statements | sprint_id, statement, sort_order |
 | `messages` | Team messaging | from_user, to_user, content, read_at |
+| `check_ins` | Session recaps with thread summaries | user_id, thread_summary, full_recap, logged |
+| `work_logs` | Synthesized work narratives | user_id, narrative, shipped, period_start |
+| `check_in_comments` | Comments on check-ins | check_in_id, user_id, content, seen |
 | `task_events` | Event logging for patterns | user_id, event_type, event_data |
 | `daily_logs` | Daily completion stats | user_id, log_date, tasks_completed |
 | `user_patterns` | Learned productivity patterns | user_id, pattern_type, pattern_data |
@@ -156,6 +159,91 @@ CREATE INDEX idx_messages_expires ON messages(expires_at);
 **Dashboard Integration:** Messages appear in the dashboard header badge and can be viewed/dismissed from the message banner.
 
 **Auto-cleanup:** Expired messages are deleted when any message operation runs.
+
+---
+
+### check_ins
+Session recaps with fun thread summaries for the activity feed.
+
+```sql
+CREATE TABLE check_ins (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  thread_summary TEXT NOT NULL,       -- ~280 chars, fun/sarcastic tone
+  full_recap TEXT NOT NULL,           -- Detailed markdown recap
+  project_name TEXT,                  -- Optional context
+  logged INTEGER DEFAULT 0,           -- 0=unlogged, 1=claimed by work_log
+  work_log_id TEXT                    -- FK to work_logs (null if unclaimed)
+);
+
+CREATE INDEX idx_check_ins_user ON check_ins(user_id);
+CREATE INDEX idx_check_ins_logged ON check_ins(logged);
+```
+
+**Used by:** `checkins.ts`
+
+**Tools:**
+- `add_checkin` — Create a new check-in (called by session-recap skill)
+- `list_checkins` — List check-ins, optionally filtered by user or logged status
+- `get_checkin` — View full check-in with comments
+
+**Thread summary examples:**
+- "Finally wrestled that navbar into submission. Only took 3 hours and my sanity."
+- "Blue River Gutters is LIVE. Cloudinary saves the day after GitHub Pages threw a tantrum."
+
+---
+
+### work_logs
+Synthesized narratives from multiple check-ins.
+
+```sql
+CREATE TABLE work_logs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  period_start DATETIME,              -- Earliest check_in in this log
+  period_end DATETIME,                -- Latest check_in in this log
+  narrative TEXT NOT NULL,            -- Synthesized story
+  shipped TEXT                        -- JSON array of concrete outputs
+);
+
+CREATE INDEX idx_work_logs_user ON work_logs(user_id);
+```
+
+**Used by:** `checkins.ts`
+
+**Tools:**
+- `create_work_log` — Pull unlogged check-ins for synthesis
+- `save_work_log` — Save synthesized narrative and mark check-ins as logged
+- `list_work_logs` — List work logs
+- `get_work_log` — View full work log
+
+**Workflow:** User says "log my work" → `create_work_log` returns unlogged check-ins → Claude synthesizes → `save_work_log` saves and links
+
+---
+
+### check_in_comments
+Comments on check-ins for team interaction.
+
+```sql
+CREATE TABLE check_in_comments (
+  id TEXT PRIMARY KEY,
+  check_in_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  content TEXT NOT NULL,
+  seen INTEGER DEFAULT 0              -- For future notification system
+);
+
+CREATE INDEX idx_comments_checkin ON check_in_comments(check_in_id);
+```
+
+**Used by:** `checkins.ts`
+
+**Tools:**
+- `add_checkin_comment` — Add a comment to any check-in
+- `list_checkin_comments` — List comments on a check-in
 
 ---
 
@@ -639,7 +727,8 @@ CREATE TABLE oauth_tokens (
 | 2025-12-31 | Added `is_active` and `plan_goal_id` to `tasks` | See migration file |
 | 2026-01-03 | Added `sprints` and `objectives` tables | See `migration_sprint_system.sql` |
 | 2026-01-03 | Added `objective_id` and `original_category` to `tasks` | See `migration_sprint_system.sql` |
-| **2026-01-03** | **Added `messages` table for team messaging** | See `migration_messages.sql` |
+| 2026-01-03 | Added `messages` table for team messaging | See `migration_messages.sql` |
+| **2026-01-14** | **Added `check_ins`, `work_logs`, `check_in_comments` tables** | See `migration_checkins.sql` |
 
 ---
 

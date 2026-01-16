@@ -9,7 +9,7 @@ interface Env {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-GitHub-Event, X-Hub-Signature-256',
 };
 
 function jsonResponse(data: any, status = 200) {
@@ -34,6 +34,117 @@ export function createApiRoutes(env: Env) {
       }
 
       try {
+        // ==================== GITHUB WEBHOOK ====================
+        
+        // GITHUB WEBHOOK - receives workflow_run events
+        if (path === '/github-webhook' && method === 'POST') {
+          const event = request.headers.get('X-GitHub-Event');
+          
+          // Only process workflow_run events
+          if (event !== 'workflow_run') {
+            return jsonResponse({ message: 'Event ignored', event });
+          }
+          
+          try {
+            const payload = await request.json() as any;
+            const { action, workflow_run, repository } = payload;
+            
+            // We care about 'completed' and 'requested' actions
+            if (!['completed', 'requested', 'in_progress'].includes(action)) {
+              return jsonResponse({ message: 'Action ignored', action });
+            }
+            
+            const id = crypto.randomUUID();
+            const ts = new Date().toISOString();
+            
+            const repoName = repository?.full_name || repository?.name || 'unknown';
+            const workflowName = workflow_run?.name || 'unknown';
+            const runId = workflow_run?.id?.toString() || null;
+            const branch = workflow_run?.head_branch || null;
+            const commitSha = workflow_run?.head_sha || null;
+            const commitMessage = workflow_run?.head_commit?.message?.split('\n')[0] || null;
+            const triggeredBy = workflow_run?.actor?.login || null;
+            const startedAt = workflow_run?.created_at || null;
+            const completedAt = workflow_run?.updated_at || null;
+            
+            let status = 'in_progress';
+            let errorMessage = null;
+            let durationSeconds = null;
+            
+            if (action === 'completed') {
+              status = workflow_run?.conclusion || 'unknown';
+              if (startedAt && completedAt) {
+                durationSeconds = Math.round(
+                  (new Date(completedAt).getTime() - new Date(startedAt).getTime()) / 1000
+                );
+              }
+              if (status === 'failure') {
+                errorMessage = 'Workflow failed - check GitHub Actions for details';
+              }
+            }
+            
+            await db.prepare(`
+              INSERT INTO deploys (id, repo, workflow, run_id, status, branch, commit_sha, commit_message, triggered_by, started_at, completed_at, duration_seconds, error_message, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+              id, repoName, workflowName, runId, status, branch, commitSha, commitMessage,
+              triggeredBy, startedAt, completedAt, durationSeconds, errorMessage, ts
+            ).run();
+            
+            return jsonResponse({ 
+              success: true, 
+              message: 'Deploy recorded',
+              deploy: { id, repo: repoName, workflow: workflowName, status }
+            });
+            
+          } catch (e: any) {
+            console.error('Webhook error:', e);
+            return jsonResponse({ error: e.message || 'Webhook processing failed' }, 500);
+          }
+        }
+
+        // ==================== DEPLOYS API ====================
+        
+        // GET recent deploys
+        if (path === '/deploys' && method === 'GET') {
+          const repo = url.searchParams.get('repo');
+          const limit = parseInt(url.searchParams.get('limit') || '10');
+          
+          let query = 'SELECT * FROM deploys';
+          const params: any[] = [];
+          
+          if (repo) {
+            query += ' WHERE repo = ?';
+            params.push(repo);
+          }
+          query += ' ORDER BY created_at DESC LIMIT ?';
+          params.push(limit);
+          
+          try {
+            const deploys = await db.prepare(query).bind(...params).all();
+            return jsonResponse({ deploys: deploys.results || [] });
+          } catch (e) {
+            // Table might not exist yet
+            return jsonResponse({ deploys: [], error: 'Table not initialized - run migration' });
+          }
+        }
+
+        // GET latest deploy for a repo
+        if (path === '/deploys/latest' && method === 'GET') {
+          const repo = url.searchParams.get('repo');
+          if (!repo) return jsonResponse({ error: 'repo parameter required' }, 400);
+          
+          try {
+            const deploy = await db.prepare(
+              'SELECT * FROM deploys WHERE repo = ? ORDER BY created_at DESC LIMIT 1'
+            ).bind(repo).first();
+            
+            return jsonResponse({ deploy: deploy || null });
+          } catch (e) {
+            return jsonResponse({ deploy: null, error: 'Table not initialized - run migration' });
+          }
+        }
+
         // MORNING BRIEFING
         if (path === '/morning' && method === 'GET') {
           const now = new Date();

@@ -7,6 +7,103 @@ import { getGitHubToken, buildGitHubOAuthUrl, GITHUB_API_URL } from '../oauth';
 export function registerGitHubTools(ctx: ToolContext) {
   const { server, env, getCurrentUser } = ctx;
 
+  // ==================== DEPLOY STATUS TOOLS ====================
+  
+  server.tool("check_deploys", {
+    repo: z.string().optional().describe("Filter by repo name (e.g., 'up-infrastructure' or 'mrmicaiah/up-infrastructure')"),
+    limit: z.number().optional().default(5).describe("Number of deploys to show"),
+  }, async ({ repo, limit }) => {
+    const db = env.DB;
+    
+    try {
+      let query = 'SELECT * FROM deploys';
+      const params: any[] = [];
+      
+      if (repo) {
+        // Support both "repo" and "owner/repo" formats
+        query += ' WHERE repo = ? OR repo LIKE ?';
+        params.push(repo, '%/' + repo);
+      }
+      query += ' ORDER BY created_at DESC LIMIT ?';
+      params.push(limit);
+      
+      const deploys = await db.prepare(query).bind(...params).all();
+      
+      if (!deploys.results || deploys.results.length === 0) {
+        return { content: [{ type: "text", text: "📭 No deploys recorded yet.\n\nMake sure the GitHub webhook is configured to send workflow_run events to:\n`https://productivity-mcp-server.micaiah-tasks.workers.dev/api/github-webhook`" }] };
+      }
+      
+      let out = "🚀 **Recent Deploys**\n\n";
+      
+      for (const d of deploys.results as any[]) {
+        const statusIcon = d.status === 'success' ? '✅' : 
+                          d.status === 'failure' ? '❌' : 
+                          d.status === 'in_progress' ? '🔄' : 
+                          d.status === 'cancelled' ? '⚪' : '❓';
+        
+        out += `${statusIcon} **${d.repo}** - ${d.workflow}\n`;
+        out += `   Branch: \`${d.branch || 'unknown'}\``;
+        if (d.commit_message) out += ` | "${d.commit_message}"`;
+        out += '\n';
+        out += `   Status: ${d.status}`;
+        if (d.duration_seconds) out += ` (${d.duration_seconds}s)`;
+        out += '\n';
+        if (d.error_message) out += `   ⚠️ ${d.error_message}\n`;
+        out += `   ${new Date(d.created_at).toLocaleString()}\n\n`;
+      }
+      
+      return { content: [{ type: "text", text: out }] };
+      
+    } catch (e: any) {
+      if (e.message?.includes('no such table')) {
+        return { content: [{ type: "text", text: "❌ Deploys table not created yet. Run the migration:\n```\nnpx wrangler d1 execute productivity-db --file=productivity-mcp/deploys-migration.sql\n```" }] };
+      }
+      return { content: [{ type: "text", text: "❌ Error checking deploys: " + e.message }] };
+    }
+  });
+
+  server.tool("deploy_status", {
+    repo: z.string().describe("Repository name to check latest deploy for"),
+  }, async ({ repo }) => {
+    const db = env.DB;
+    
+    try {
+      const deploy = await db.prepare(
+        'SELECT * FROM deploys WHERE repo = ? OR repo LIKE ? ORDER BY created_at DESC LIMIT 1'
+      ).bind(repo, '%/' + repo).first() as any;
+      
+      if (!deploy) {
+        return { content: [{ type: "text", text: `📭 No deploys found for **${repo}**` }] };
+      }
+      
+      const statusIcon = deploy.status === 'success' ? '✅' : 
+                        deploy.status === 'failure' ? '❌' : 
+                        deploy.status === 'in_progress' ? '🔄' : 
+                        deploy.status === 'cancelled' ? '⚪' : '❓';
+      
+      let out = `${statusIcon} **${deploy.repo}** - Latest Deploy\n\n`;
+      out += `**Workflow:** ${deploy.workflow}\n`;
+      out += `**Branch:** \`${deploy.branch || 'unknown'}\`\n`;
+      out += `**Status:** ${deploy.status}\n`;
+      if (deploy.commit_sha) out += `**Commit:** \`${deploy.commit_sha.substring(0, 7)}\`\n`;
+      if (deploy.commit_message) out += `**Message:** "${deploy.commit_message}"\n`;
+      if (deploy.triggered_by) out += `**Triggered by:** ${deploy.triggered_by}\n`;
+      if (deploy.duration_seconds) out += `**Duration:** ${deploy.duration_seconds}s\n`;
+      if (deploy.error_message) out += `\n⚠️ **Error:** ${deploy.error_message}\n`;
+      out += `\n**Time:** ${new Date(deploy.created_at).toLocaleString()}`;
+      
+      return { content: [{ type: "text", text: out }] };
+      
+    } catch (e: any) {
+      if (e.message?.includes('no such table')) {
+        return { content: [{ type: "text", text: "❌ Deploys table not created yet. Run the migration:\n```\nnpx wrangler d1 execute productivity-db --file=productivity-mcp/deploys-migration.sql\n```" }] };
+      }
+      return { content: [{ type: "text", text: "❌ Error: " + e.message }] };
+    }
+  });
+
+  // ==================== EXISTING GITHUB TOOLS ====================
+
   server.tool("github_status", {}, async () => {
     const token = await getGitHubToken(env, getCurrentUser());
     

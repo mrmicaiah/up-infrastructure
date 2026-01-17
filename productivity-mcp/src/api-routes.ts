@@ -4,6 +4,9 @@ interface Env {
   DB: D1Database;
   USER_ID: string;
   DASHBOARD_API_KEY?: string;
+  BETHANY_API_KEY?: string;
+  GOOGLE_CLIENT_ID: string;
+  GOOGLE_CLIENT_SECRET: string;
 }
 
 const corsHeaders = {
@@ -19,9 +22,55 @@ function jsonResponse(data: any, status = 200) {
   });
 }
 
+const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
+const GMAIL_API_URL = 'https://gmail.googleapis.com/gmail/v1';
+
+// Helper to get valid OAuth token
+async function getValidToken(db: D1Database, userId: string, provider: string, env: Env): Promise<string | null> {
+  const token = await db.prepare(
+    'SELECT * FROM oauth_tokens WHERE user_id = ? AND provider = ?'
+  ).bind(userId, provider).first() as any;
+  
+  if (!token) return null;
+  
+  if (token.expires_at && new Date(token.expires_at) < new Date()) {
+    const response = await fetch(GOOGLE_TOKEN_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: env.GOOGLE_CLIENT_ID,
+        client_secret: env.GOOGLE_CLIENT_SECRET,
+        refresh_token: token.refresh_token,
+        grant_type: 'refresh_token',
+      }),
+    });
+    
+    if (!response.ok) return null;
+    
+    const data: any = await response.json();
+    const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString();
+    
+    await db.prepare(
+      'UPDATE oauth_tokens SET access_token = ?, expires_at = ? WHERE user_id = ? AND provider = ?'
+    ).bind(data.access_token, expiresAt, userId, provider).run();
+    
+    return data.access_token;
+  }
+  
+  return token.access_token;
+}
+
 export function createApiRoutes(env: Env) {
   const db = env.DB;
   const userId = env.USER_ID;
+
+  // Helper to check Bethany API key
+  function checkBethanyAuth(request: Request): boolean {
+    const authHeader = request.headers.get('Authorization');
+    if (!authHeader?.startsWith('Bearer ')) return false;
+    const token = authHeader.slice(7);
+    return token === env.BETHANY_API_KEY;
+  }
 
   return {
     async fetch(request: Request): Promise<Response> {
@@ -34,6 +83,221 @@ export function createApiRoutes(env: Env) {
       }
 
       try {
+        // ==================== EMAIL API (for Bethany) ====================
+        
+        // Check inbox
+        if (path === '/email/inbox' && method === 'GET') {
+          if (!checkBethanyAuth(request)) {
+            return jsonResponse({ error: 'Unauthorized' }, 401);
+          }
+          
+          const account = url.searchParams.get('account') || 'personal';
+          const maxResults = parseInt(url.searchParams.get('max_results') || '10');
+          
+          const provider = account === 'personal' ? 'gmail_personal' : 'gmail_company';
+          const token = await getValidToken(db, userId, provider, env);
+          
+          if (!token) {
+            return jsonResponse({ error: `${account} email not connected`, needs_auth: true }, 401);
+          }
+          
+          const resp = await fetch(`${GMAIL_API_URL}/users/me/messages?maxResults=${maxResults}&q=is:unread`, {
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          
+          if (!resp.ok) {
+            return jsonResponse({ error: 'Failed to fetch emails' }, 500);
+          }
+          
+          const data: any = await resp.json();
+          
+          if (!data.messages?.length) {
+            return jsonResponse({ messages: [], count: 0 });
+          }
+          
+          // Fetch details for each message
+          const messages: any[] = [];
+          for (const msg of data.messages.slice(0, maxResults)) {
+            const msgResp = await fetch(`${GMAIL_API_URL}/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, {
+              headers: { Authorization: 'Bearer ' + token }
+            });
+            
+            if (msgResp.ok) {
+              const msgData: any = await msgResp.json();
+              const headers = msgData.payload?.headers || [];
+              messages.push({
+                id: msg.id,
+                from: headers.find((h: any) => h.name === 'From')?.value || 'Unknown',
+                subject: headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)',
+                date: headers.find((h: any) => h.name === 'Date')?.value || '',
+                snippet: msgData.snippet || ''
+              });
+            }
+          }
+          
+          return jsonResponse({ messages, count: messages.length, account });
+        }
+
+        // Read specific email
+        if (path === '/email/read' && method === 'GET') {
+          if (!checkBethanyAuth(request)) {
+            return jsonResponse({ error: 'Unauthorized' }, 401);
+          }
+          
+          const account = url.searchParams.get('account') || 'personal';
+          const messageId = url.searchParams.get('message_id');
+          
+          if (!messageId) {
+            return jsonResponse({ error: 'message_id required' }, 400);
+          }
+          
+          const provider = account === 'personal' ? 'gmail_personal' : 'gmail_company';
+          const token = await getValidToken(db, userId, provider, env);
+          
+          if (!token) {
+            return jsonResponse({ error: `${account} email not connected`, needs_auth: true }, 401);
+          }
+          
+          const resp = await fetch(`${GMAIL_API_URL}/users/me/messages/${messageId}?format=full`, {
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          
+          if (!resp.ok) {
+            return jsonResponse({ error: 'Failed to fetch email' }, 500);
+          }
+          
+          const data: any = await resp.json();
+          const headers = data.payload?.headers || [];
+          
+          // Extract body
+          let body = '';
+          if (data.payload?.body?.data) {
+            body = atob(data.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+          } else if (data.payload?.parts) {
+            const textPart = data.payload.parts.find((p: any) => p.mimeType === 'text/plain');
+            if (textPart?.body?.data) {
+              body = atob(textPart.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+            }
+          }
+          
+          return jsonResponse({
+            id: messageId,
+            from: headers.find((h: any) => h.name === 'From')?.value || 'Unknown',
+            to: headers.find((h: any) => h.name === 'To')?.value || 'Unknown',
+            subject: headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)',
+            date: headers.find((h: any) => h.name === 'Date')?.value || '',
+            body: body.slice(0, 5000),
+            truncated: body.length > 5000
+          });
+        }
+
+        // Send email
+        if (path === '/email/send' && method === 'POST') {
+          if (!checkBethanyAuth(request)) {
+            return jsonResponse({ error: 'Unauthorized' }, 401);
+          }
+          
+          const body = await request.json() as any;
+          const { account, to, subject, body: emailBody } = body;
+          
+          if (!to || !subject || !emailBody) {
+            return jsonResponse({ error: 'to, subject, and body required' }, 400);
+          }
+          
+          const provider = (account || 'personal') === 'personal' ? 'gmail_personal' : 'gmail_company';
+          const token = await getValidToken(db, userId, provider, env);
+          
+          if (!token) {
+            return jsonResponse({ error: `${account || 'personal'} email not connected`, needs_auth: true }, 401);
+          }
+          
+          // Build the email
+          const email = [
+            `To: ${to}`,
+            `Subject: ${subject}`,
+            'Content-Type: text/plain; charset=utf-8',
+            '',
+            emailBody
+          ].join('\r\n');
+          
+          // Base64 encode
+          const encodedEmail = btoa(email).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+          
+          const resp = await fetch(`${GMAIL_API_URL}/users/me/messages/send`, {
+            method: 'POST',
+            headers: {
+              Authorization: 'Bearer ' + token,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ raw: encodedEmail })
+          });
+          
+          if (!resp.ok) {
+            const error = await resp.text();
+            return jsonResponse({ error: `Failed to send: ${error}` }, 500);
+          }
+          
+          const result: any = await resp.json();
+          return jsonResponse({ success: true, message_id: result.id, sent_to: to });
+        }
+
+        // Search email
+        if (path === '/email/search' && method === 'GET') {
+          if (!checkBethanyAuth(request)) {
+            return jsonResponse({ error: 'Unauthorized' }, 401);
+          }
+          
+          const account = url.searchParams.get('account') || 'personal';
+          const query = url.searchParams.get('query');
+          const maxResults = parseInt(url.searchParams.get('max_results') || '10');
+          
+          if (!query) {
+            return jsonResponse({ error: 'query required' }, 400);
+          }
+          
+          const provider = account === 'personal' ? 'gmail_personal' : 'gmail_company';
+          const token = await getValidToken(db, userId, provider, env);
+          
+          if (!token) {
+            return jsonResponse({ error: `${account} email not connected`, needs_auth: true }, 401);
+          }
+          
+          const resp = await fetch(`${GMAIL_API_URL}/users/me/messages?maxResults=${maxResults}&q=${encodeURIComponent(query)}`, {
+            headers: { Authorization: 'Bearer ' + token }
+          });
+          
+          if (!resp.ok) {
+            return jsonResponse({ error: 'Failed to search emails' }, 500);
+          }
+          
+          const data: any = await resp.json();
+          
+          if (!data.messages?.length) {
+            return jsonResponse({ messages: [], count: 0, query });
+          }
+          
+          const messages: any[] = [];
+          for (const msg of data.messages.slice(0, maxResults)) {
+            const msgResp = await fetch(`${GMAIL_API_URL}/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, {
+              headers: { Authorization: 'Bearer ' + token }
+            });
+            
+            if (msgResp.ok) {
+              const msgData: any = await msgResp.json();
+              const headers = msgData.payload?.headers || [];
+              messages.push({
+                id: msg.id,
+                from: headers.find((h: any) => h.name === 'From')?.value || 'Unknown',
+                subject: headers.find((h: any) => h.name === 'Subject')?.value || '(no subject)',
+                date: headers.find((h: any) => h.name === 'Date')?.value || '',
+                snippet: msgData.snippet || ''
+              });
+            }
+          }
+          
+          return jsonResponse({ messages, count: messages.length, query, account });
+        }
+
         // ==================== GITHUB WEBHOOK ====================
         
         // GITHUB WEBHOOK - receives workflow_run events

@@ -83,6 +83,66 @@ export function createApiRoutes(env: Env) {
       }
 
       try {
+        // ==================== CHECKINS (Activity Thread) ====================
+        
+        // GET checkins list
+        if (path === '/checkins' && method === 'GET') {
+          const limit = parseInt(url.searchParams.get('limit') || '20');
+          const userFilter = url.searchParams.get('user');
+          
+          let query = `SELECT * FROM check_ins`;
+          const params: any[] = [];
+          
+          if (userFilter) {
+            query += ` WHERE user_id = ?`;
+            params.push(userFilter);
+          }
+          
+          query += ` ORDER BY created_at DESC LIMIT ?`;
+          params.push(limit);
+          
+          const checkins = await db.prepare(query).bind(...params).all();
+          return jsonResponse({ checkins: checkins.results || [] });
+        }
+
+        // GET single checkin with comments
+        const checkinMatch = path.match(/^\/checkins\/([^/]+)$/);
+        if (checkinMatch && method === 'GET') {
+          const checkinId = checkinMatch[1];
+          
+          const checkin = await db.prepare(`SELECT * FROM check_ins WHERE id = ?`).bind(checkinId).first();
+          if (!checkin) return jsonResponse({ error: 'Checkin not found' }, 404);
+          
+          const comments = await db.prepare(`
+            SELECT * FROM checkin_comments 
+            WHERE check_in_id = ? 
+            ORDER BY created_at ASC
+          `).bind(checkinId).all();
+          
+          return jsonResponse({ 
+            checkin, 
+            comments: comments.results || [] 
+          });
+        }
+
+        // POST comment on checkin
+        const checkinCommentMatch = path.match(/^\/checkins\/([^/]+)\/comments$/);
+        if (checkinCommentMatch && method === 'POST') {
+          const checkinId = checkinCommentMatch[1];
+          const body = await request.json() as any;
+          const { content } = body;
+          
+          if (!content?.trim()) return jsonResponse({ error: 'Content required' }, 400);
+          
+          const id = crypto.randomUUID();
+          await db.prepare(`
+            INSERT INTO checkin_comments (id, check_in_id, user_id, content, created_at) 
+            VALUES (?, ?, ?, ?, datetime('now'))
+          `).bind(id, checkinId, userId, content.trim()).run();
+          
+          return jsonResponse({ success: true, id, message: 'Comment added' });
+        }
+
         // ==================== EMAIL API (for Bethany) ====================
         
         // Check inbox

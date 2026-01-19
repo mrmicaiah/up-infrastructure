@@ -13,7 +13,6 @@ import { registerJournalTools } from './journal';
 import { registerGitHubTools } from './github';
 import { registerSkillsTools } from './skills';
 import { registerSprintTools } from './sprints';
-import { registerCourierTools } from './courier';
 import { registerBlogTools } from './blog';
 import { registerCheckinsTools } from './checkins';
 
@@ -32,7 +31,6 @@ export function registerAllTools(ctx: ToolContext) {
   registerGitHubTools(ctx);
   registerSkillsTools(ctx);
   registerSprintTools(ctx);
-  registerCourierTools(ctx);
   registerBlogTools(ctx);
   registerCheckinsTools(ctx);
 }
@@ -53,7 +51,6 @@ export {
   registerGitHubTools,
   registerSkillsTools,
   registerSprintTools,
-  registerCourierTools,
   registerBlogTools,
   registerCheckinsTools,
 };

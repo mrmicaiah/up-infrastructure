@@ -100,6 +100,50 @@ export function getNextDueDate(currentDue: string | null, recurrence: string): s
   return base.toISOString().split('T')[0];
 }
 
+// Get the next valid due date from today (for catching up overdue recurring tasks)
+// Returns today if today matches the recurrence pattern, otherwise the next valid date
+export function getCaughtUpDueDate(recurrence: string): string {
+  const today = new Date();
+  const todayStr = today.toISOString().split('T')[0];
+  const dayOfWeek = today.getDay();
+  
+  const dayMap: Record<string, number> = {
+    'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6
+  };
+  
+  switch (recurrence.toLowerCase()) {
+    case 'daily':
+      // Daily tasks are always valid today
+      return todayStr;
+    case 'weekdays':
+      // If today is a weekday (Mon-Fri), use today; otherwise find next weekday
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        return todayStr;
+      }
+      return getNextDueDate(todayStr, recurrence);
+    case 'weekly':
+    case 'biweekly':
+    case 'monthly':
+    case 'yearly':
+      // For these, just use today as the new anchor point
+      return todayStr;
+    default:
+      // Handle specific days: "mon", "fri", "mon,thu", etc.
+      const targetDays = recurrence.toLowerCase().split(',')
+        .map(d => dayMap[d.trim()])
+        .filter(d => d !== undefined);
+      if (targetDays.length > 0) {
+        // If today matches one of the target days, use today
+        if (targetDays.includes(dayOfWeek)) {
+          return todayStr;
+        }
+        // Otherwise find the next valid day
+        return getNextDueDate(todayStr, recurrence);
+      }
+      return todayStr;
+  }
+}
+
 // ==================
 // JOURNAL HELPERS
 // ==================

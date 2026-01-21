@@ -15,6 +15,7 @@ import { registerSkillsTools } from './skills';
 import { registerSprintTools } from './sprints';
 import { registerBlogTools } from './blog';
 import { registerCheckinsTools } from './checkins';
+import { registerCloudinaryTools } from './cloudinary';
 
 export function registerAllTools(ctx: ToolContext) {
   registerTaskTools(ctx);
@@ -33,6 +34,7 @@ export function registerAllTools(ctx: ToolContext) {
   registerSprintTools(ctx);
   registerBlogTools(ctx);
   registerCheckinsTools(ctx);
+  registerCloudinaryTools(ctx);
 }
 
 // Re-export individual registrations for selective use
@@ -53,4 +55,5 @@ export {
   registerSprintTools,
   registerBlogTools,
   registerCheckinsTools,
+  registerCloudinaryTools,
 };

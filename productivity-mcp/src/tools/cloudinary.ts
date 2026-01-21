@@ -130,10 +130,10 @@ export function registerCloudinaryTools(ctx: ToolContext) {
   });
 
   // ============================================================================
-  // cloudinary_list - List images
+  // cloudinary_list - List images (uses Search API for reliable folder filtering)
   // ============================================================================
   server.tool("cloudinary_list", {
-    folder: z.string().optional().describe("Filter by folder"),
+    folder: z.string().optional().describe("Filter by exact folder path (e.g., 'top-five-friends/logos')"),
     tag: z.string().optional().describe("Filter by tag"),
     max_results: z.number().optional().default(30).describe("Max results (default 30)"),
   }, async ({ folder, tag, max_results }) => {
@@ -141,21 +141,55 @@ export function registerCloudinaryTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ Cloudinary not configured. Run cloudinary_status for setup instructions." }] };
     }
     
+    // Use Search API for folder queries (more reliable than Resources API prefix)
+    if (folder) {
+      const searchUrl = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/search`;
+      
+      const resp = await fetch(searchUrl, {
+        method: "POST",
+        headers: {
+          Authorization: getCloudinaryAuth(env),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          expression: `folder="${folder}"`,
+          max_results: max_results,
+          sort_by: [{ created_at: "desc" }],
+        }),
+      });
+      
+      if (!resp.ok) {
+        const err = await resp.text();
+        return { content: [{ type: "text", text: "❌ Search failed: " + err }] };
+      }
+      
+      const result: any = await resp.json();
+      
+      if (!result.resources || result.resources.length === 0) {
+        return { content: [{ type: "text", text: `📂 No images found in folder: ${folder}` }] };
+      }
+      
+      let out = `📂 **Images in ${folder}**\n\n`;
+      
+      for (const img of result.resources) {
+        out += `• **${img.public_id}**\n`;
+        out += `  ${img.secure_url}\n`;
+        out += `  ${img.width}x${img.height} · ${Math.round(img.bytes / 1024)} KB\n\n`;
+      }
+      
+      out += `\n_Showing ${result.resources.length} of ${result.total_count || result.resources.length} images_`;
+      
+      return { content: [{ type: "text", text: out }] };
+    }
+    
+    // For tag or all images, use Resources API
     let url: string;
     const params = new URLSearchParams();
     params.append("max_results", max_results.toString());
     
     if (tag) {
-      // List by tag
       url = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/image/tags/${tag}`;
-    } else if (folder) {
-      // List by folder - requires type=upload and prefix with trailing slash
-      url = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/image/upload`;
-      const folderPrefix = folder.endsWith('/') ? folder : folder + '/';
-      params.append("prefix", folderPrefix);
-      params.append("type", "upload");
     } else {
-      // List all images
       url = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/image/upload`;
       params.append("type", "upload");
     }
@@ -174,10 +208,10 @@ export function registerCloudinaryTools(ctx: ToolContext) {
     const result: any = await resp.json();
     
     if (!result.resources || result.resources.length === 0) {
-      return { content: [{ type: "text", text: "📂 No images found" + (folder ? ` in folder: ${folder}` : "") }] };
+      return { content: [{ type: "text", text: "📂 No images found" + (tag ? ` with tag: ${tag}` : "") }] };
     }
     
-    let out = "📂 **Images**" + (folder ? ` in ${folder}` : "") + "\n\n";
+    let out = "📂 **Images**" + (tag ? ` tagged '${tag}'` : "") + "\n\n";
     
     for (const img of result.resources) {
       out += `• **${img.public_id}**\n`;

@@ -13,9 +13,10 @@ import { registerJournalTools } from './journal';
 import { registerGitHubTools } from './github';
 import { registerSkillsTools } from './skills';
 import { registerSprintTools } from './sprints';
+import { registerCourierTools } from './courier';
 import { registerBlogTools } from './blog';
 import { registerCheckinsTools } from './checkins';
-import { registerCloudinaryTools } from './cloudinary';
+import { registerHandoffTools } from './handoff';
 
 export function registerAllTools(ctx: ToolContext) {
   registerTaskTools(ctx);
@@ -32,9 +33,10 @@ export function registerAllTools(ctx: ToolContext) {
   registerGitHubTools(ctx);
   registerSkillsTools(ctx);
   registerSprintTools(ctx);
+  registerCourierTools(ctx);
   registerBlogTools(ctx);
   registerCheckinsTools(ctx);
-  registerCloudinaryTools(ctx);
+  registerHandoffTools(ctx);
 }
 
 // Re-export individual registrations for selective use
@@ -53,7 +55,8 @@ export {
   registerGitHubTools,
   registerSkillsTools,
   registerSprintTools,
+  registerCourierTools,
   registerBlogTools,
   registerCheckinsTools,
-  registerCloudinaryTools,
+  registerHandoffTools,
 };

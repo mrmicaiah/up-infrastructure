@@ -90,6 +90,55 @@ export default {
       return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '1.0.0' });
     }
     
+    // GET /blogs - List all blogs (public, no API keys exposed)
+    if (path === '/blogs' && request.method === 'GET') {
+      try {
+        const blogs = [];
+        
+        // List all KV keys matching blog:*:config
+        const listResult = await env.BLOGS.list({ prefix: 'blog:' });
+        
+        // Filter for config keys and extract blog IDs
+        const configKeys = listResult.keys.filter(k => k.name.endsWith(':config'));
+        
+        for (const key of configKeys) {
+          // Extract blogId from key name (blog:{blogId}:config)
+          const parts = key.name.split(':');
+          if (parts.length !== 3) continue;
+          const blogId = parts[1];
+          
+          // Get config
+          const configJson = await env.BLOGS.get(key.name);
+          if (!configJson) continue;
+          
+          const config = JSON.parse(configJson);
+          
+          // Get post count
+          const postsJson = await env.BLOGS.get(`blog:${blogId}:posts`);
+          const posts = postsJson ? JSON.parse(postsJson) : [];
+          const publishedPosts = posts.filter(p => p.published);
+          
+          blogs.push({
+            id: blogId,
+            name: config.siteName || blogId,
+            slug: blogId,
+            siteUrl: config.siteUrl || null,
+            authorId: config.authorId || null,
+            authorName: config.authorName || null,
+            postCount: publishedPosts.length
+          });
+        }
+        
+        // Sort by name
+        blogs.sort((a, b) => a.name.localeCompare(b.name));
+        
+        return jsonResponse({ blogs });
+      } catch (e) {
+        console.error('Error listing blogs:', e);
+        return jsonResponse({ error: 'Failed to list blogs', details: e.message }, 500);
+      }
+    }
+    
     // Parse /:blogId/... routes
     const match = path.match(/^\/([a-z0-9-]+)\/(.*)$/);
     if (!match) {

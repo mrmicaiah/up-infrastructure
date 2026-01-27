@@ -167,8 +167,10 @@ export function registerTaskTools(ctx: ToolContext) {
     task_id: z.string().optional(),
     search: z.string().optional(),
     position: z.number().optional().describe("Task number from list (e.g., 3 to complete the 3rd task)"),
-  }, async ({ task_id, search, position }) => {
+    include_teammate: z.boolean().optional().default(false).describe("Also search teammate tasks"),
+  }, async ({ task_id, search, position, include_teammate }) => {
     let task: any = null;
+    let isTeammateTask = false;
     
     if (position) {
       const results = await env.DB.prepare(
@@ -181,16 +183,39 @@ export function registerTaskTools(ctx: ToolContext) {
       task = results.results[position - 1];
     } else if (task_id) {
       task = await env.DB.prepare("SELECT * FROM tasks WHERE id = ?").bind(task_id).first();
+      if (task && task.user_id !== getCurrentUser()) {
+        isTeammateTask = true;
+      }
     } else if (search) {
-      const results = await env.DB.prepare(
+      // First try to find in current user's tasks
+      let results = await env.DB.prepare(
         "SELECT * FROM tasks WHERE user_id = ? AND status = 'open' AND text LIKE ? LIMIT 5"
       ).bind(getCurrentUser(), '%' + search + '%').all();
       
+      // If not found and include_teammate is true (or always for better UX), also search teammate tasks
+      if (results.results.length === 0) {
+        results = await env.DB.prepare(
+          "SELECT * FROM tasks WHERE user_id != ? AND status = 'open' AND text LIKE ? LIMIT 5"
+        ).bind(getCurrentUser(), '%' + search + '%').all();
+        
+        if (results.results.length > 0) {
+          isTeammateTask = true;
+        }
+      }
+      
       if (results.results.length === 0) return { content: [{ type: "text", text: 'No task found matching "' + search + '"' }] };
-      if (results.results.length === 1) task = results.results[0];
-      else {
+      if (results.results.length === 1) {
+        task = results.results[0];
+        if (task.user_id !== getCurrentUser()) {
+          isTeammateTask = true;
+        }
+      } else {
         let out = 'Multiple matches:\n';
-        results.results.forEach((t: any, i: number) => { out += (i+1) + '. ' + t.text + ' (ID: ' + t.id + ')\n'; });
+        results.results.forEach((t: any, i: number) => { 
+          out += (i+1) + '. ' + t.text;
+          if (t.user_id !== getCurrentUser()) out += ' (owner: ' + t.user_id + ')';
+          out += ' (ID: ' + t.id + ')\n'; 
+        });
         return { content: [{ type: "text", text: out }] };
       }
     } else {
@@ -209,11 +234,15 @@ export function registerTaskTools(ctx: ToolContext) {
     }
     
     const daysToComplete = Math.round((Date.now() - new Date(task.created_at).getTime()) / 86400000);
-    await logEvent(env, getCurrentUser(), 'completed', task.id, { text: task.text, daysToComplete, focusLevel: task.focus_level, category: task.category });
-    await updateDailyLog(env, getCurrentUser(), 'tasks_completed');
+    
+    // Log under the task owner's user_id for accurate stats
+    const taskOwner = task.user_id;
+    await logEvent(env, taskOwner, 'completed', task.id, { text: task.text, daysToComplete, focusLevel: task.focus_level, category: task.category, completedBy: getCurrentUser() });
+    await updateDailyLog(env, taskOwner, 'tasks_completed');
     await autoCheckpoint(env, getCurrentUser(), 'task_completed', `Completed: ${task.text}`, [task.category || task.project || 'general'], task.id);
     
     let resp = '✅ Completed: "' + task.text + '"';
+    if (isTeammateTask) resp += '\n👥 (Task owned by ' + task.user_id + ')';
     if (daysToComplete === 0) resp += '\n⚡ Same-day completion!';
     else if (daysToComplete <= 1) resp += '\n🎯 Quick turnaround!';
     if (checklistItem) resp += '\n📋 Launch checklist item also marked complete';

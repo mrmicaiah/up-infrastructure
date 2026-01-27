@@ -18,6 +18,7 @@ import { registerBlogTools } from './blog';
 import { registerCheckinsTools } from './checkins';
 import { registerHandoffTools } from './handoff';
 import { registerCloudinaryTools } from './cloudinary';
+import { registerAuthorsTools } from './authors';
 
 export function registerAllTools(ctx: ToolContext) {
   registerTaskTools(ctx);
@@ -39,6 +40,7 @@ export function registerAllTools(ctx: ToolContext) {
   registerCheckinsTools(ctx);
   registerHandoffTools(ctx);
   registerCloudinaryTools(ctx);
+  registerAuthorsTools(ctx);
 }
 
 // Re-export individual registrations for selective use
@@ -62,4 +64,5 @@ export {
   registerCheckinsTools,
   registerHandoffTools,
   registerCloudinaryTools,
+  registerAuthorsTools,
 };

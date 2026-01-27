@@ -301,10 +301,10 @@ export function registerSprintTools(ctx: ToolContext) {
       out += `💡 Add what you're pushing for with \`add_objective\`\n`;
     } else {
       for (const obj of objectives.results as any[]) {
-        // Get tasks for this objective
+        // Get tasks for this objective - FIX: Added user_id filter
         const tasks = await env.DB.prepare(
-          'SELECT * FROM tasks WHERE objective_id = ? ORDER BY status ASC, is_active DESC, priority DESC, created_at ASC'
-        ).bind(obj.id).all();
+          'SELECT * FROM tasks WHERE objective_id = ? AND user_id = ? ORDER BY status ASC, is_active DESC, priority DESC, created_at ASC'
+        ).bind(obj.id, getCurrentUser()).all();
         
         const objTasks = tasks.results as any[];
         const objComplete = objTasks.filter(t => t.status === 'done').length;
@@ -446,12 +446,13 @@ export function registerSprintTools(ctx: ToolContext) {
     const objectiveIds = (objectives.results as any[]).map(o => o.id);
     
     // Find incomplete tasks and return them to their original categories
+    // FIX: Added user_id filter to only affect current user's tasks
     let returnedCount = 0;
     if (objectiveIds.length > 0) {
       const placeholders = objectiveIds.map(() => '?').join(',');
       const incompleteTasks = await env.DB.prepare(
-        `SELECT * FROM tasks WHERE objective_id IN (${placeholders}) AND status = 'open'`
-      ).bind(...objectiveIds).all();
+        `SELECT * FROM tasks WHERE objective_id IN (${placeholders}) AND user_id = ? AND status = 'open'`
+      ).bind(...objectiveIds, getCurrentUser()).all();
       
       for (const task of incompleteTasks.results as any[]) {
         const restoreCategory = task.original_category || task.category || 'General';

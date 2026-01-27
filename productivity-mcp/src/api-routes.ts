@@ -512,8 +512,9 @@ export function createApiRoutes(env: Env) {
 
               const objectivesWithProgress = [];
               for (const obj of (objectives.results || []) as any[]) {
-                const openCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND status = 'open'").bind(obj.id).first();
-                const doneCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND status = 'done'").bind(obj.id).first();
+                // FIX: Added user_id filter to correctly count tasks per user
+                const openCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'open'").bind(obj.id, userId).first();
+                const doneCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'done'").bind(obj.id, userId).first();
                 objectivesWithProgress.push({
                   id: obj.id,
                   statement: obj.statement,

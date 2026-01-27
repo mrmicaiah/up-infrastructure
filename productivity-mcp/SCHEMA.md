@@ -24,6 +24,7 @@
 | `checkpoints` | Work checkpoints | user_id, session_id, summary |
 | `handoff_suggestions` | Team task handoffs | from_user, to_user, task_id |
 | `skills` | Stored skill instructions | name, content, category |
+| `authors` | Blog author profiles | name, slug, bio, photo_url |
 | `plans` | **DEPRECATED** - use sprints | user_id, title, start_date |
 | `plan_goals` | **DEPRECATED** - use objectives | plan_id, description |
 | `launch_docs` | Launch document templates | name, doc_type, content |
@@ -400,6 +401,29 @@ CREATE TABLE skills (
 
 ---
 
+### authors
+Blog author profiles shared across all UP blogs. Part of the blog system rebuild.
+
+```sql
+CREATE TABLE authors (
+  id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(8)))),
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,          -- URL-safe identifier (e.g., 'micaiah-bussey')
+  bio TEXT,
+  photo_url TEXT,
+  email TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_authors_slug ON authors(slug);
+```
+
+**Used by:** `up-blogs` worker (via API calls to productivity-mcp)
+
+**Note:** Authors are stored in the central productivity database but used by the blog system. Blog configs in Worker KV reference authors by slug.
+
+---
+
 ### plans (DEPRECATED)
 > ⚠️ **DEPRECATED** - Use `sprints` table instead. Kept for historical data.
 
@@ -728,7 +752,8 @@ CREATE TABLE oauth_tokens (
 | 2026-01-03 | Added `sprints` and `objectives` tables | See `migration_sprint_system.sql` |
 | 2026-01-03 | Added `objective_id` and `original_category` to `tasks` | See `migration_sprint_system.sql` |
 | 2026-01-03 | Added `messages` table for team messaging | See `migration_messages.sql` |
-| **2026-01-14** | **Added `check_ins`, `work_logs`, `check_in_comments` tables** | See `migration_checkins.sql` |
+| 2026-01-14 | Added `check_ins`, `work_logs`, `check_in_comments` tables | See `migration_checkins.sql` |
+| **2026-01-27** | **Added `authors` table for blog system** | See `migrations/009-authors.sql` |
 
 ---
 

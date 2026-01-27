@@ -7,4 +7,4 @@ WORKER_URL = "https://up-blogs-1.micaiah-tasks.workers.dev"
 
 [[kv_namespaces]]
 binding = "BLOGS"
-id = "" # Will be filled in after creating KV
+id = "eb9b2852cb44441797e0989ced3178d2"

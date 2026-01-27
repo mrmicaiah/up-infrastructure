@@ -150,7 +150,13 @@ export function registerBethanyTools(ctx: ToolContext) {
     const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const yesterdayDone = await env.DB.prepare('SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = "done" AND DATE(completed_at) = ?').bind(getCurrentUser(), yesterday).first();
     
-    // Where you left off
+    // Get recent check-ins (last 24 hours) for "WHERE YOU LEFT OFF"
+    const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+    const recentCheckins = await env.DB.prepare(
+      'SELECT thread_summary, project_name, created_at FROM check_ins WHERE user_id = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 5'
+    ).bind(getCurrentUser(), twentyFourHoursAgo).all();
+    
+    // Fallback: get last good_night checkpoint if no recent check-ins
     const lastCheckpoint = await env.DB.prepare(`SELECT * FROM checkpoints WHERE user_id = ? AND trigger_type = 'night' ORDER BY checkpoint_time DESC LIMIT 1`).bind(getCurrentUser()).first();
     
     // Build output
@@ -158,8 +164,19 @@ export function registerBethanyTools(ctx: ToolContext) {
     out += `⏰ Clocked in: ${central.time} Central\n`;
     if (notes) out += `💭 ${notes}\n`;
     
-    // Where you left off
-    if (lastCheckpoint) {
+    // Where you left off - prefer check-ins, fallback to checkpoint
+    if (recentCheckins.results.length > 0) {
+      out += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      out += `📍 WHERE YOU LEFT OFF (last 24h)\n`;
+      out += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+      for (const c of recentCheckins.results as any[]) {
+        const checkinTime = new Date(c.created_at);
+        const timeStr = formatCentralTime(checkinTime, { weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+        const projectTag = c.project_name ? ` • ${c.project_name}` : '';
+        out += `**${timeStr}**${projectTag}\n`;
+        out += `${c.thread_summary}\n\n`;
+      }
+    } else if (lastCheckpoint) {
       out += `\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
       out += `📍 WHERE YOU LEFT OFF\n`;
       out += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;

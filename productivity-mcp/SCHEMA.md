@@ -25,6 +25,7 @@
 | `handoff_suggestions` | Team task handoffs | from_user, to_user, task_id |
 | `skills` | Stored skill instructions | name, content, category |
 | `authors` | Blog author profiles | name, slug, bio, photo_url |
+| `analytics_properties` | GA4 property configurations | user_id, property_id, name, blog_id |
 | `plans` | **DEPRECATED** - use sprints | user_id, title, start_date |
 | `plan_goals` | **DEPRECATED** - use objectives | plan_id, description |
 | `launch_docs` | Launch document templates | name, doc_type, content |
@@ -83,6 +84,40 @@ CREATE TABLE tasks (
 **Sprint Logic:** When `objective_id IS NOT NULL`, task is part of a sprint. `original_category` stores where to return the task when sprint ends.
 
 **Incoming Inbox Logic:** When `assigned_by IS NOT NULL`, the task appears in the user's Incoming section until claimed.
+
+---
+
+### analytics_properties
+Google Analytics GA4 property configurations for dashboard integration.
+
+```sql
+CREATE TABLE analytics_properties (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  property_id TEXT NOT NULL,           -- GA4 property ID (numeric, e.g., 123456789)
+  name TEXT NOT NULL,                   -- Friendly name for the property
+  blog_id TEXT,                         -- Optional link to Blogger blog ID
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, property_id)
+);
+
+CREATE INDEX idx_analytics_user ON analytics_properties(user_id);
+CREATE INDEX idx_analytics_blog ON analytics_properties(blog_id);
+```
+
+**Used by:** `analytics.ts`, `api-routes.ts`
+
+**Tools:**
+- `analytics_properties` — List configured GA4 properties
+- `analytics_add_property` — Add a new GA4 property (verifies API access)
+- `analytics_remove_property` — Remove a property configuration
+- `analytics_report` — Get pageviews, sessions, users for date range
+- `analytics_top_content` — Best performing pages
+- `analytics_sources` — Traffic source breakdown
+- `analytics_geography` — Geographic distribution
+- `analytics_realtime` — Real-time active users
+
+**Note:** Property ID is the numeric GA4 property ID (e.g., `123456789`), NOT the Measurement ID (which starts with `G-`).
 
 ---
 
@@ -733,7 +768,7 @@ CREATE TABLE oauth_tokens (
 );
 ```
 
-**Valid `provider` values:** `google_drive`, `gmail_personal`, `gmail_company`, `blogger`, `blogger_personal`, `blogger_company`, `google_contacts_personal`, `google_contacts_company`, `github`
+**Valid `provider` values:** `google_drive`, `gmail_personal`, `gmail_company`, `blogger`, `blogger_personal`, `blogger_company`, `google_contacts_personal`, `google_contacts_company`, `google_analytics`, `github`
 
 **Used by:** `oauth/index.ts`, `connections.ts`
 
@@ -753,20 +788,21 @@ CREATE TABLE oauth_tokens (
 | 2026-01-03 | Added `objective_id` and `original_category` to `tasks` | See `migration_sprint_system.sql` |
 | 2026-01-03 | Added `messages` table for team messaging | See `migration_messages.sql` |
 | 2026-01-14 | Added `check_ins`, `work_logs`, `check_in_comments` tables | See `migration_checkins.sql` |
-| **2026-01-27** | **Added `authors` table for blog system** | See `migrations/009-authors.sql` |
+| 2026-01-27 | Added `authors` table for blog system | See `migrations/009-authors.sql` |
+| **2026-01-28** | **Added `analytics_properties` table for GA4 integration** | See `migrations/010-analytics.sql` |
 
 ---
 
 ## Running Migrations
 
 ```powershell
-cd "C:\Users\mrmic\My Drive\Untitled Publishers\BethaneK\productivity-mcp-server"
+cd "C:\Users\mrmic\My Drive\Untitled Publishers\BethaneK\up-infrastructure\productivity-mcp"
 
 # Single command
 npx wrangler d1 execute productivity-brain --remote --command "YOUR SQL HERE;"
 
 # From file
-npx wrangler d1 execute productivity-brain --remote --file=migration_NAME.sql
+npx wrangler d1 execute productivity-brain --remote --file=migrations/migration_NAME.sql
 ```
 
 **Note:** SQLite doesn't support multiple ALTER TABLE statements in one command. Run each separately.

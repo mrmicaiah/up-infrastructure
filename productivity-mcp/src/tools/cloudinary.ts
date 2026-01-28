@@ -78,7 +78,10 @@ export function registerCloudinaryTools(ctx: ToolContext) {
     formData.append("timestamp", Math.floor(Date.now() / 1000).toString());
     
     if (filename) formData.append("public_id", filename);
-    if (folder) formData.append("folder", folder);
+    if (folder) {
+      formData.append("folder", folder);
+      formData.append("asset_folder", folder);
+    }
     if (tags && tags.length > 0) formData.append("tags", tags.join(","));
     if (overwrite) formData.append("overwrite", "true");
     
@@ -87,7 +90,10 @@ export function registerCloudinaryTools(ctx: ToolContext) {
       timestamp: Math.floor(Date.now() / 1000).toString(),
     };
     if (filename) paramsToSign.public_id = filename;
-    if (folder) paramsToSign.folder = folder;
+    if (folder) {
+      paramsToSign.folder = folder;
+      paramsToSign.asset_folder = folder;
+    }
     if (tags && tags.length > 0) paramsToSign.tags = tags.join(",");
     if (overwrite) paramsToSign.overwrite = "true";
     
@@ -130,10 +136,10 @@ export function registerCloudinaryTools(ctx: ToolContext) {
   });
 
   // ============================================================================
-  // cloudinary_list - List images (uses Search API for reliable folder filtering)
+  // cloudinary_list - List images (uses Search API)
   // ============================================================================
   server.tool("cloudinary_list", {
-    folder: z.string().optional().describe("Filter by exact folder path (e.g., 'top-five-friends/logos')"),
+    folder: z.string().optional().describe("Filter by folder name (e.g., 'beyond fake studying')"),
     tag: z.string().optional().describe("Filter by tag"),
     max_results: z.number().optional().default(30).describe("Max results (default 30)"),
   }, async ({ folder, tag, max_results }) => {
@@ -141,85 +147,61 @@ export function registerCloudinaryTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ Cloudinary not configured. Run cloudinary_status for setup instructions." }] };
     }
     
-    // Use Search API for folder queries (more reliable than Resources API prefix)
+    // Always use Search API for more flexibility
+    const searchUrl = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/search`;
+    
+    // Build search expression
+    let expression = "resource_type:image";
     if (folder) {
-      const searchUrl = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/search`;
-      
-      const resp = await fetch(searchUrl, {
-        method: "POST",
-        headers: {
-          Authorization: getCloudinaryAuth(env),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          expression: `folder="${folder}"`,
-          max_results: max_results,
-          sort_by: [{ created_at: "desc" }],
-        }),
-      });
-      
-      if (!resp.ok) {
-        const err = await resp.text();
-        return { content: [{ type: "text", text: "❌ Search failed: " + err }] };
-      }
-      
-      const result: any = await resp.json();
-      
-      if (!result.resources || result.resources.length === 0) {
-        return { content: [{ type: "text", text: `📂 No images found in folder: ${folder}` }] };
-      }
-      
-      let out = `📂 **Images in ${folder}**\n\n`;
-      
-      for (const img of result.resources) {
-        out += `• **${img.public_id}**\n`;
-        out += `  ${img.secure_url}\n`;
-        out += `  ${img.width}x${img.height} · ${Math.round(img.bytes / 1024)} KB\n\n`;
-      }
-      
-      out += `\n_Showing ${result.resources.length} of ${result.total_count || result.resources.length} images_`;
-      
-      return { content: [{ type: "text", text: out }] };
+      // Try asset_folder which is the Media Library folder assignment
+      expression = `asset_folder="${folder}"`;
     }
-    
-    // For tag or all images, use Resources API
-    let url: string;
-    const params = new URLSearchParams();
-    params.append("max_results", max_results.toString());
-    
     if (tag) {
-      url = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/image/tags/${tag}`;
-    } else {
-      url = `${CLOUDINARY_API_BASE}/${env.CLOUDINARY_CLOUD_NAME}/resources/image/upload`;
-      params.append("type", "upload");
+      expression = tag ? `tags=${tag}` : expression;
     }
     
-    const resp = await fetch(url + "?" + params.toString(), {
+    const resp = await fetch(searchUrl, {
+      method: "POST",
       headers: {
         Authorization: getCloudinaryAuth(env),
-      }
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        expression: expression,
+        max_results: max_results,
+        sort_by: [{ created_at: "desc" }],
+        with_field: ["tags", "context", "asset_folder"],
+      }),
     });
     
     if (!resp.ok) {
       const err = await resp.text();
-      return { content: [{ type: "text", text: "❌ List failed: " + err }] };
+      return { content: [{ type: "text", text: "❌ Search failed: " + err }] };
     }
     
     const result: any = await resp.json();
     
     if (!result.resources || result.resources.length === 0) {
-      return { content: [{ type: "text", text: "📂 No images found" + (tag ? ` with tag: ${tag}` : "") }] };
+      let msg = "📂 No images found";
+      if (folder) msg += ` in folder: ${folder}`;
+      if (tag) msg += ` with tag: ${tag}`;
+      return { content: [{ type: "text", text: msg }] };
     }
     
-    let out = "📂 **Images**" + (tag ? ` tagged '${tag}'` : "") + "\n\n";
+    let out = "📂 **Images**";
+    if (folder) out += ` in "${folder}"`;
+    if (tag) out += ` tagged "${tag}"`;
+    out += "\n\n";
     
     for (const img of result.resources) {
       out += `• **${img.public_id}**\n`;
       out += `  ${img.secure_url}\n`;
-      out += `  ${img.width}x${img.height} · ${Math.round(img.bytes / 1024)} KB\n\n`;
+      out += `  ${img.width}x${img.height} · ${Math.round(img.bytes / 1024)} KB`;
+      if (img.asset_folder) out += ` · 📁 ${img.asset_folder}`;
+      out += "\n\n";
     }
     
-    out += `\n_Showing ${result.resources.length} of ${result.total_count || result.resources.length} images_`;
+    out += `_Showing ${result.resources.length} of ${result.total_count || result.resources.length} images_`;
     
     return { content: [{ type: "text", text: out }] };
   });

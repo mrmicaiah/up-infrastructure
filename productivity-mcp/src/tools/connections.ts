@@ -15,6 +15,7 @@ export function registerConnectionTools(ctx: ToolContext) {
     const bloggerCompanyToken = await getValidToken(env, getCurrentUser(), 'blogger_company');
     const personalContactsToken = await getValidToken(env, getCurrentUser(), 'google_contacts_personal');
     const companyContactsToken = await getValidToken(env, getCurrentUser(), 'google_contacts_company');
+    const analyticsToken = await getValidToken(env, getCurrentUser(), 'google_analytics');
     const githubToken = await getGitHubToken(env, getCurrentUser());
     
     // Check for legacy 'blogger' token and migrate display
@@ -34,6 +35,7 @@ export function registerConnectionTools(ctx: ToolContext) {
     
     status += personalContactsToken ? '✅ Personal Contacts: Connected\n' : '❌ Personal Contacts: Not connected\n';
     status += companyContactsToken ? '✅ Company Contacts: Connected\n' : '❌ Company Contacts: Not connected\n';
+    status += analyticsToken ? '✅ Google Analytics: Connected\n' : '❌ Google Analytics: Not connected\n';
     status += githubToken ? '✅ GitHub: Connected\n' : '❌ GitHub: Not connected\n';
     
     return { content: [{ type: "text", text: status }] };
@@ -48,7 +50,8 @@ export function registerConnectionTools(ctx: ToolContext) {
       'blogger_personal',
       'blogger_company',
       'google_contacts_personal', 
-      'google_contacts_company', 
+      'google_contacts_company',
+      'google_analytics',
       'github'
     ]).describe("Service to connect")
   }, async ({ service }) => {
@@ -81,6 +84,7 @@ export function registerConnectionTools(ctx: ToolContext) {
       'blogger_company': 'Company Blogger (Untitled Publishers account)',
       'google_contacts_personal': 'Personal Contacts',
       'google_contacts_company': 'Company Contacts',
+      'google_analytics': 'Google Analytics (read-only access to your GA4 data)',
       'github': 'GitHub (repository access)',
     };
     
@@ -90,6 +94,9 @@ export function registerConnectionTools(ctx: ToolContext) {
     }
     if (actualService === 'blogger_personal') {
       note = '\n\n💡 **Tip:** Open this link in an incognito window to ensure you sign in with your personal Google account (not the Untitled Publishers account).';
+    }
+    if (actualService === 'google_analytics') {
+      note = '\n\n📊 **Setup Required:**\n1. Make sure Google Analytics Data API is enabled in your Google Cloud Console\n2. Sign in with the Google account that has access to your GA4 properties\n3. After connecting, use `analytics_add_property` to add your GA4 property IDs';
     }
     
     return { content: [{ type: "text", text: `🔗 Connect ${serviceNames[actualService] || actualService}:\n\n${url}${note}` }] };
@@ -104,7 +111,8 @@ export function registerConnectionTools(ctx: ToolContext) {
       'blogger_personal',
       'blogger_company',
       'google_contacts_personal', 
-      'google_contacts_company', 
+      'google_contacts_company',
+      'google_analytics',
       'github'
     ]).describe("Service to disconnect")
   }, async ({ service }) => {

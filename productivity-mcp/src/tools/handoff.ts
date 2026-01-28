@@ -1,20 +1,7 @@
+// Handoff tools - Task queue for async work between sessions
+
 import { ToolContext } from '../types';
 import { z } from 'zod';
-import {
-  handoff_create_task,
-  handoff_view_queue,
-  handoff_get_results,
-  handoff_update_task,
-  handoff_project_status
-} from './project-manager/handoff-manager-tools';
-import {
-  handoff_get_next_task,
-  handoff_get_task,
-  handoff_complete_task,
-  handoff_block_task,
-  handoff_update_progress,
-  handoff_list_my_tasks
-} from './project-manager/handoff-worker-tools';
 
 export function registerHandoffTools(ctx: ToolContext) {
   const { server, env, getCurrentUser } = ctx;
@@ -29,12 +16,26 @@ export function registerHandoffTools(ctx: ToolContext) {
     estimated_complexity: z.enum(['simple', 'moderate', 'complex']).optional().describe("Estimated complexity"),
     project_name: z.string().optional().describe("Project this task belongs to"),
     parent_task_id: z.string().optional().describe("Parent task ID if this is a subtask"),
-  }, async (params) => {
-    const result = await handoff_create_task(env.DB, params);
+  }, async ({ instruction, context, files_needed, priority, estimated_complexity, project_name, parent_task_id }) => {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    const pri = priority || 'normal';
+    const complexity = estimated_complexity || 'moderate';
+    const proj = project_name || 'General';
+    
+    await env.DB.prepare(`
+      INSERT INTO handoff_tasks (id, instruction, context, files_needed, priority, estimated_complexity, project_name, parent_task_id, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).bind(
+      id, instruction, context || null, 
+      files_needed ? JSON.stringify(files_needed) : null,
+      pri, complexity, proj, parent_task_id || null, now, now
+    ).run();
+    
     return {
       content: [{
         type: "text",
-        text: `✅ ${result.message}\nTask ID: ${result.task_id}\nPriority: ${result.priority}\nProject: ${result.project}`
+        text: `✅ Task created\nTask ID: ${id}\nPriority: ${pri}\nProject: ${proj}`
       }]
     };
   });
@@ -44,130 +45,147 @@ export function registerHandoffTools(ctx: ToolContext) {
     project_name: z.string().optional().describe("Filter by project"),
     priority: z.string().optional().describe("Filter by priority"),
     limit: z.number().optional().default(20).describe("Max results to return"),
-  }, async (params) => {
-    const result = await handoff_view_queue(env.DB, params);
+  }, async ({ status, project_name, priority, limit }) => {
+    let query = 'SELECT * FROM handoff_tasks WHERE 1=1';
+    const params: any[] = [];
     
-    let output = `📋 **Handoff Queue** (${result.total_tasks} tasks)\n\n`;
+    if (status) { query += ' AND status = ?'; params.push(status); }
+    if (project_name) { query += ' AND project_name = ?'; params.push(project_name); }
+    if (priority) { query += ' AND priority = ?'; params.push(priority); }
     
-    if (result.filters_applied.status || result.filters_applied.project_name || result.filters_applied.priority) {
+    query += ' ORDER BY CASE priority WHEN "urgent" THEN 1 WHEN "high" THEN 2 WHEN "normal" THEN 3 ELSE 4 END, created_at ASC LIMIT ?';
+    params.push(limit || 20);
+    
+    const result = await env.DB.prepare(query).bind(...params).all();
+    const tasks = result.results || [];
+    
+    let output = `📋 **Handoff Queue** (${tasks.length} tasks)\n\n`;
+    
+    if (status || project_name || priority) {
       output += `**Filters:** `;
       const filters = [];
-      if (result.filters_applied.status) filters.push(`status=${result.filters_applied.status}`);
-      if (result.filters_applied.project_name) filters.push(`project=${result.filters_applied.project_name}`);
-      if (result.filters_applied.priority) filters.push(`priority=${result.filters_applied.priority}`);
+      if (status) filters.push(`status=${status}`);
+      if (project_name) filters.push(`project=${project_name}`);
+      if (priority) filters.push(`priority=${priority}`);
       output += filters.join(', ') + '\n\n';
     }
     
-    if (result.tasks.length === 0) {
+    if (tasks.length === 0) {
       output += 'No tasks found.';
     } else {
-      for (const task of result.tasks) {
+      for (const task of tasks as any[]) {
         const priorityIcon = task.priority === 'urgent' ? '🔴' : task.priority === 'high' ? '🟡' : '⚪';
         output += `${priorityIcon} **${task.instruction}**\n`;
         output += `   ID: ${task.id}\n`;
         output += `   Status: ${task.status}\n`;
         if (task.project_name) output += `   Project: ${task.project_name}\n`;
-        if (task.context) output += `   Context: ${task.context}\n`;
-        if (task.files_needed && task.files_needed.length > 0) {
-          output += `   Files needed: ${task.files_needed.join(', ')}\n`;
-        }
+        if (task.context) output += `   Context: ${task.context.slice(0, 100)}${task.context.length > 100 ? '...' : ''}\n`;
         output += '\n';
       }
     }
     
-    return {
-      content: [{ type: "text", text: output }]
-    };
+    return { content: [{ type: "text", text: output }] };
   });
 
   server.tool("handoff_get_results", {
     task_id: z.string().optional().describe("Get specific task result"),
     project_name: z.string().optional().describe("Filter by project"),
     since: z.string().optional().describe("Get results since this date (ISO format)"),
-  }, async (params) => {
-    const result = await handoff_get_results(env.DB, params);
+  }, async ({ task_id, project_name, since }) => {
+    let query = "SELECT * FROM handoff_tasks WHERE status = 'complete'";
+    const params: any[] = [];
     
-    let output = `✅ **Completed Tasks** (${result.results_count} results)\n\n`;
+    if (task_id) { query += ' AND id = ?'; params.push(task_id); }
+    if (project_name) { query += ' AND project_name = ?'; params.push(project_name); }
+    if (since) { query += ' AND completed_at >= ?'; params.push(since); }
     
-    if (result.tasks.length === 0) {
+    query += ' ORDER BY completed_at DESC LIMIT 20';
+    
+    const result = await env.DB.prepare(query).bind(...params).all();
+    const tasks = result.results || [];
+    
+    let output = `✅ **Completed Tasks** (${tasks.length} results)\n\n`;
+    
+    if (tasks.length === 0) {
       output += 'No completed tasks found.';
     } else {
-      for (const task of result.tasks) {
+      for (const task of tasks as any[]) {
         output += `**${task.instruction}**\n`;
         output += `   ID: ${task.id}\n`;
         output += `   Completed: ${task.completed_at}\n`;
         if (task.project_name) output += `   Project: ${task.project_name}\n`;
         if (task.output_summary) output += `   Summary: ${task.output_summary}\n`;
         if (task.output_location) output += `   Output: ${task.output_location}\n`;
-        if (task.files_created && task.files_created.length > 0) {
-          output += `   Files created: ${task.files_created.join(', ')}\n`;
-        }
-        if (task.github_paths && task.github_paths.length > 0) {
-          output += `   GitHub: ${task.github_paths.join(', ')}\n`;
-        }
-        if (task.drive_file_ids && task.drive_file_ids.length > 0) {
-          output += `   Drive files: ${task.drive_file_ids.length} file(s)\n`;
-        }
         output += '\n';
       }
     }
     
-    return {
-      content: [{ type: "text", text: output }]
-    };
+    return { content: [{ type: "text", text: output }] };
   });
 
   server.tool("handoff_update_task", {
-    task_id: z.string().describe("Task ID to update"),
-    instruction: z.string().optional().describe("New instruction text"),
-    context: z.string().optional().describe("New context"),
-    priority: z.string().optional().describe("New priority"),
-    status: z.string().optional().describe("New status"),
-  }, async (params) => {
-    const result = await handoff_update_task(env.DB, params);
+    task_id: z.string().describe("Task ID to update (required)"),
+    instruction: z.string().optional().describe("New/updated instructions"),
+    context: z.string().optional().describe("Add or update context"),
+    priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe("Change priority"),
+    status: z.enum(['pending', 'claimed', 'in_progress', 'complete', 'blocked']).optional().describe("Manually change status"),
+  }, async ({ task_id, instruction, context, priority, status }) => {
+    const updates: string[] = [];
+    const params: any[] = [];
     
-    if (!result.success) {
-      return {
-        content: [{ type: "text", text: `❌ Error: ${result.error}` }]
-      };
+    if (instruction) { updates.push('instruction = ?'); params.push(instruction); }
+    if (context) { updates.push('context = ?'); params.push(context); }
+    if (priority) { updates.push('priority = ?'); params.push(priority); }
+    if (status) { updates.push('status = ?'); params.push(status); }
+    
+    if (updates.length === 0) {
+      return { content: [{ type: "text", text: "❌ No updates provided" }] };
     }
     
-    return {
-      content: [{ type: "text", text: `✅ ${result.message}\nTask ID: ${result.task_id}` }]
-    };
+    updates.push("updated_at = ?");
+    params.push(new Date().toISOString());
+    params.push(task_id);
+    
+    await env.DB.prepare(`UPDATE handoff_tasks SET ${updates.join(', ')} WHERE id = ?`).bind(...params).run();
+    
+    return { content: [{ type: "text", text: `✅ Task updated\nTask ID: ${task_id}` }] };
   });
 
   server.tool("handoff_project_status", {
     project_name: z.string().describe("Project name to check status for"),
-  }, async (params) => {
-    const result = await handoff_project_status(env.DB, params);
+  }, async ({ project_name }) => {
+    const stats = await env.DB.prepare(`
+      SELECT status, COUNT(*) as count FROM handoff_tasks 
+      WHERE project_name = ? GROUP BY status
+    `).bind(project_name).all();
     
-    let output = `📊 **Project Status: ${result.project_name}**\n\n`;
+    const counts: Record<string, number> = { pending: 0, claimed: 0, in_progress: 0, complete: 0, blocked: 0 };
+    for (const row of (stats.results || []) as any[]) {
+      counts[row.status] = row.count;
+    }
+    
+    const blocked = await env.DB.prepare(`
+      SELECT instruction, blocked_reason FROM handoff_tasks 
+      WHERE project_name = ? AND status = 'blocked' LIMIT 5
+    `).bind(project_name).all();
+    
+    let output = `📊 **Project Status: ${project_name}**\n\n`;
     output += `**Task Counts:**\n`;
-    output += `   Pending: ${result.stats.pending}\n`;
-    output += `   Claimed: ${result.stats.claimed}\n`;
-    output += `   In Progress: ${result.stats.in_progress}\n`;
-    output += `   Complete: ${result.stats.complete}\n`;
-    output += `   Blocked: ${result.stats.blocked}\n`;
+    output += `   Pending: ${counts.pending}\n`;
+    output += `   Claimed: ${counts.claimed}\n`;
+    output += `   In Progress: ${counts.in_progress}\n`;
+    output += `   Complete: ${counts.complete}\n`;
+    output += `   Blocked: ${counts.blocked}\n`;
     
-    if (result.recent_completions && result.recent_completions.length > 0) {
-      output += `\n**Recent Completions:**\n`;
-      for (const task of result.recent_completions.slice(0, 5)) {
-        output += `   ✅ ${task.instruction}\n`;
-      }
-    }
-    
-    if (result.blocked_tasks && result.blocked_tasks.length > 0) {
+    if (blocked.results && blocked.results.length > 0) {
       output += `\n**Blocked Tasks:**\n`;
-      for (const task of result.blocked_tasks) {
+      for (const task of blocked.results as any[]) {
         output += `   ⚠️ ${task.instruction}\n`;
-        output += `      Reason: ${task.blocked_reason}\n`;
+        if (task.blocked_reason) output += `      Reason: ${task.blocked_reason}\n`;
       }
     }
     
-    return {
-      content: [{ type: "text", text: output }]
-    };
+    return { content: [{ type: "text", text: output }] };
   });
 
   // Worker Tools - for claiming and completing tasks
@@ -175,47 +193,59 @@ export function registerHandoffTools(ctx: ToolContext) {
   server.tool("handoff_get_next_task", {
     priority_filter: z.enum(['high', 'urgent']).optional().describe("Only get high/urgent tasks"),
     project_name: z.string().optional().describe("Only get tasks from this project"),
-  }, async (params) => {
-    const result = await handoff_get_next_task(env.DB, params);
+  }, async ({ priority_filter, project_name }) => {
+    let query = "SELECT * FROM handoff_tasks WHERE status = 'pending'";
+    const params: any[] = [];
     
-    if (!result.found) {
-      return {
-        content: [{ type: "text", text: `📭 ${result.message}` }]
-      };
+    if (priority_filter === 'urgent') {
+      query += " AND priority = 'urgent'";
+    } else if (priority_filter === 'high') {
+      query += " AND priority IN ('high', 'urgent')";
+    }
+    if (project_name) { query += ' AND project_name = ?'; params.push(project_name); }
+    
+    query += ' ORDER BY CASE priority WHEN "urgent" THEN 1 WHEN "high" THEN 2 WHEN "normal" THEN 3 ELSE 4 END, created_at ASC LIMIT 1';
+    
+    const result = await env.DB.prepare(query).bind(...params).first() as any;
+    
+    if (!result) {
+      return { content: [{ type: "text", text: "📭 No pending tasks available" }] };
     }
     
-    const task = result.task;
+    // Claim the task
+    await env.DB.prepare(`
+      UPDATE handoff_tasks SET status = 'claimed', claimed_at = ?, updated_at = ? WHERE id = ?
+    `).bind(new Date().toISOString(), new Date().toISOString(), result.id).run();
+    
     let output = `📋 **Claimed Task**\n\n`;
-    output += `**${task.instruction}**\n\n`;
-    output += `ID: ${task.id}\n`;
-    output += `Priority: ${task.priority}\n`;
-    output += `Complexity: ${task.estimated_complexity}\n`;
-    if (task.project_name) output += `Project: ${task.project_name}\n`;
-    if (task.context) output += `\n**Context:**\n${task.context}\n`;
-    if (task.files_needed && task.files_needed.length > 0) {
-      output += `\n**Files Needed:**\n`;
-      for (const file of task.files_needed) {
-        output += `   • ${file}\n`;
+    output += `**${result.instruction}**\n\n`;
+    output += `ID: ${result.id}\n`;
+    output += `Priority: ${result.priority}\n`;
+    output += `Complexity: ${result.estimated_complexity || 'moderate'}\n`;
+    if (result.project_name) output += `Project: ${result.project_name}\n`;
+    if (result.context) output += `\n**Context:**\n${result.context}\n`;
+    if (result.files_needed) {
+      const files = JSON.parse(result.files_needed);
+      if (files.length > 0) {
+        output += `\n**Files Needed:**\n`;
+        for (const file of files) {
+          output += `   • ${file}\n`;
+        }
       }
     }
     
-    return {
-      content: [{ type: "text", text: output }]
-    };
+    return { content: [{ type: "text", text: output }] };
   });
 
   server.tool("handoff_get_task", {
-    task_id: z.string().describe("Task ID to retrieve"),
-  }, async (params) => {
-    const result = await handoff_get_task(env.DB, params);
+    task_id: z.string().describe("The task ID to retrieve"),
+  }, async ({ task_id }) => {
+    const task = await env.DB.prepare('SELECT * FROM handoff_tasks WHERE id = ?').bind(task_id).first() as any;
     
-    if (!result.found) {
-      return {
-        content: [{ type: "text", text: `❌ ${result.message}` }]
-      };
+    if (!task) {
+      return { content: [{ type: "text", text: "❌ Task not found" }] };
     }
     
-    const task = result.task;
     let output = `**${task.instruction}**\n\n`;
     output += `ID: ${task.id}\n`;
     output += `Status: ${task.status}\n`;
@@ -223,9 +253,7 @@ export function registerHandoffTools(ctx: ToolContext) {
     if (task.project_name) output += `Project: ${task.project_name}\n`;
     if (task.context) output += `\nContext: ${task.context}\n`;
     
-    return {
-      content: [{ type: "text", text: output }]
-    };
+    return { content: [{ type: "text", text: output }] };
   });
 
   server.tool("handoff_complete_task", {
@@ -238,28 +266,54 @@ export function registerHandoffTools(ctx: ToolContext) {
     drive_folder_id: z.string().optional().describe("Google Drive folder ID"),
     drive_file_ids: z.array(z.string()).optional().describe("Google Drive file IDs"),
     worker_notes: z.string().optional().describe("Additional notes from worker"),
-  }, async (params) => {
-    const result = await handoff_complete_task(env.DB, params);
+  }, async ({ task_id, output_summary, output_location, files_created, github_repo, github_paths, drive_folder_id, drive_file_ids, worker_notes }) => {
+    const now = new Date().toISOString();
     
-    let output = `✅ ${result.message}\n`;
-    output += `Task ID: ${result.task_id}\n`;
-    output += `Output location: ${result.output_location}`;
+    await env.DB.prepare(`
+      UPDATE handoff_tasks SET 
+        status = 'complete', 
+        completed_at = ?, 
+        updated_at = ?,
+        output_summary = ?,
+        output_location = ?,
+        files_created = ?,
+        github_repo = ?,
+        github_paths = ?,
+        drive_folder_id = ?,
+        drive_file_ids = ?,
+        worker_notes = ?
+      WHERE id = ?
+    `).bind(
+      now, now, output_summary, output_location,
+      files_created ? JSON.stringify(files_created) : null,
+      github_repo || null,
+      github_paths ? JSON.stringify(github_paths) : null,
+      drive_folder_id || null,
+      drive_file_ids ? JSON.stringify(drive_file_ids) : null,
+      worker_notes || null,
+      task_id
+    ).run();
     
     return {
-      content: [{ type: "text", text: output }]
+      content: [{
+        type: "text",
+        text: `✅ Task completed\nTask ID: ${task_id}\nOutput location: ${output_location}`
+      }]
     };
   });
 
   server.tool("handoff_block_task", {
     task_id: z.string().describe("Task ID to mark as blocked"),
     reason: z.string().describe("Reason why the task is blocked"),
-  }, async (params) => {
-    const result = await handoff_block_task(env.DB, params);
+  }, async ({ task_id, reason }) => {
+    await env.DB.prepare(`
+      UPDATE handoff_tasks SET status = 'blocked', blocked_reason = ?, updated_at = ? WHERE id = ?
+    `).bind(reason, new Date().toISOString(), task_id).run();
     
     return {
       content: [{
         type: "text",
-        text: `⚠️ ${result.message}\nTask ID: ${result.task_id}\nReason: ${result.reason}`
+        text: `⚠️ Task blocked\nTask ID: ${task_id}\nReason: ${reason}`
       }]
     };
   });
@@ -267,26 +321,33 @@ export function registerHandoffTools(ctx: ToolContext) {
   server.tool("handoff_update_progress", {
     task_id: z.string().describe("Task ID to update"),
     notes: z.string().describe("Progress notes"),
-  }, async (params) => {
-    const result = await handoff_update_progress(env.DB, params);
+  }, async ({ task_id, notes }) => {
+    await env.DB.prepare(`
+      UPDATE handoff_tasks SET status = 'in_progress', progress_notes = ?, updated_at = ? WHERE id = ?
+    `).bind(notes, new Date().toISOString(), task_id).run();
     
     return {
       content: [{
         type: "text",
-        text: `✅ ${result.message}\nTask ID: ${result.task_id}`
+        text: `✅ Progress updated\nTask ID: ${task_id}`
       }]
     };
   });
 
-  server.tool("handoff_list_my_tasks", {}, async () => {
-    const result = await handoff_list_my_tasks(env.DB);
+  server.tool("handoff_my_tasks", {}, async () => {
+    const result = await env.DB.prepare(`
+      SELECT * FROM handoff_tasks WHERE status IN ('claimed', 'in_progress') 
+      ORDER BY CASE priority WHEN "urgent" THEN 1 WHEN "high" THEN 2 WHEN "normal" THEN 3 ELSE 4 END, created_at ASC
+    `).all();
     
-    let output = `📋 **My Active Tasks** (${result.total} tasks)\n\n`;
+    const tasks = result.results || [];
     
-    if (result.tasks.length === 0) {
+    let output = `📋 **My Active Tasks** (${tasks.length} tasks)\n\n`;
+    
+    if (tasks.length === 0) {
       output += 'No active tasks.';
     } else {
-      for (const task of result.tasks) {
+      for (const task of tasks as any[]) {
         const priorityIcon = task.priority === 'urgent' ? '🔴' : task.priority === 'high' ? '🟡' : '⚪';
         const statusIcon = task.status === 'in_progress' ? '🔄' : '📌';
         
@@ -294,15 +355,10 @@ export function registerHandoffTools(ctx: ToolContext) {
         output += `   ID: ${task.id}\n`;
         output += `   Status: ${task.status}\n`;
         if (task.project_name) output += `   Project: ${task.project_name}\n`;
-        if (task.files_needed && task.files_needed.length > 0) {
-          output += `   Files needed: ${task.files_needed.length} file(s)\n`;
-        }
         output += '\n';
       }
     }
     
-    return {
-      content: [{ type: "text", text: output }]
-    };
+    return { content: [{ type: "text", text: output }] };
   });
 }

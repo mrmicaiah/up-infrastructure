@@ -24,6 +24,7 @@ function jsonResponse(data: any, status = 200) {
 
 const GOOGLE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const GMAIL_API_URL = 'https://gmail.googleapis.com/gmail/v1';
+const ANALYTICS_DATA_API = 'https://analyticsdata.googleapis.com/v1beta';
 
 // Helper to get valid OAuth token
 async function getValidToken(db: D1Database, userId: string, provider: string, env: Env): Promise<string | null> {
@@ -83,6 +84,249 @@ export function createApiRoutes(env: Env) {
       }
 
       try {
+        // ==================== ANALYTICS API ====================
+        
+        // GET analytics properties + connection status
+        if (path === '/analytics/properties' && method === 'GET') {
+          const token = await getValidToken(db, userId, 'google_analytics', env);
+          if (!token) {
+            return jsonResponse({ connected: false, properties: [] });
+          }
+          
+          const properties = await db.prepare(
+            'SELECT * FROM analytics_properties WHERE user_id = ? ORDER BY name'
+          ).bind(userId).all();
+          
+          return jsonResponse({ 
+            connected: true, 
+            properties: properties.results || [] 
+          });
+        }
+
+        // GET analytics report
+        if (path === '/analytics/report' && method === 'GET') {
+          const propertyId = url.searchParams.get('property_id');
+          const days = parseInt(url.searchParams.get('days') || '7');
+          
+          if (!propertyId) return jsonResponse({ error: 'property_id required' }, 400);
+          
+          const token = await getValidToken(db, userId, 'google_analytics', env);
+          if (!token) return jsonResponse({ error: 'Not connected' }, 401);
+          
+          const response = await fetch(`${ANALYTICS_DATA_API}/properties/${propertyId}:runReport`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dateRanges: [{ startDate: `${days}daysAgo`, endDate: 'today' }],
+              dimensions: [{ name: 'date' }],
+              metrics: [
+                { name: 'screenPageViews' },
+                { name: 'sessions' },
+                { name: 'activeUsers' },
+                { name: 'bounceRate' },
+                { name: 'averageSessionDuration' }
+              ],
+              orderBys: [{ dimension: { orderType: 'ALPHANUMERIC', dimensionName: 'date' } }]
+            })
+          });
+          
+          if (!response.ok) {
+            const error = await response.text();
+            return jsonResponse({ error: `Analytics API error: ${error}` }, 500);
+          }
+          
+          const data: any = await response.json();
+          
+          // Calculate totals and format daily data
+          const totals = { pageViews: 0, sessions: 0, activeUsers: 0, bounceRate: 0, avgSessionDuration: 0 };
+          const daily: any[] = [];
+          
+          if (data.rows) {
+            for (const row of data.rows) {
+              const dateStr = row.dimensionValues[0].value;
+              const formattedDate = `${dateStr.slice(0,4)}-${dateStr.slice(4,6)}-${dateStr.slice(6,8)}`;
+              const pageViews = parseFloat(row.metricValues[0].value) || 0;
+              const sessions = parseFloat(row.metricValues[1].value) || 0;
+              const users = parseFloat(row.metricValues[2].value) || 0;
+              const bounceRate = parseFloat(row.metricValues[3].value) || 0;
+              const duration = parseFloat(row.metricValues[4].value) || 0;
+              
+              daily.push({ date: formattedDate, pageViews, sessions, users, bounceRate: bounceRate * 100, duration });
+              
+              totals.pageViews += pageViews;
+              totals.sessions += sessions;
+              totals.activeUsers += users;
+              totals.bounceRate += bounceRate * 100;
+              totals.avgSessionDuration += duration;
+            }
+            
+            if (data.rows.length > 0) {
+              totals.bounceRate = totals.bounceRate / data.rows.length;
+              totals.avgSessionDuration = totals.avgSessionDuration / data.rows.length;
+            }
+          }
+          
+          return jsonResponse({ totals, daily });
+        }
+
+        // GET top content
+        if (path === '/analytics/top-content' && method === 'GET') {
+          const propertyId = url.searchParams.get('property_id');
+          const days = parseInt(url.searchParams.get('days') || '30');
+          const limit = parseInt(url.searchParams.get('limit') || '10');
+          
+          if (!propertyId) return jsonResponse({ error: 'property_id required' }, 400);
+          
+          const token = await getValidToken(db, userId, 'google_analytics', env);
+          if (!token) return jsonResponse({ error: 'Not connected' }, 401);
+          
+          const response = await fetch(`${ANALYTICS_DATA_API}/properties/${propertyId}:runReport`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dateRanges: [{ startDate: `${days}daysAgo`, endDate: 'today' }],
+              dimensions: [{ name: 'pageTitle' }, { name: 'pagePath' }],
+              metrics: [{ name: 'screenPageViews' }, { name: 'activeUsers' }, { name: 'averageSessionDuration' }],
+              orderBys: [{ metric: { metricName: 'screenPageViews' }, desc: true }],
+              limit
+            })
+          });
+          
+          if (!response.ok) {
+            const error = await response.text();
+            return jsonResponse({ error: `Analytics API error: ${error}` }, 500);
+          }
+          
+          const data: any = await response.json();
+          const pages = (data.rows || []).map((row: any) => ({
+            title: row.dimensionValues[0].value || 'Untitled',
+            path: row.dimensionValues[1].value,
+            views: Math.round(parseFloat(row.metricValues[0].value)),
+            users: Math.round(parseFloat(row.metricValues[1].value)),
+            duration: parseFloat(row.metricValues[2].value)
+          }));
+          
+          return jsonResponse({ pages });
+        }
+
+        // GET traffic sources
+        if (path === '/analytics/sources' && method === 'GET') {
+          const propertyId = url.searchParams.get('property_id');
+          const days = parseInt(url.searchParams.get('days') || '30');
+          
+          if (!propertyId) return jsonResponse({ error: 'property_id required' }, 400);
+          
+          const token = await getValidToken(db, userId, 'google_analytics', env);
+          if (!token) return jsonResponse({ error: 'Not connected' }, 401);
+          
+          const response = await fetch(`${ANALYTICS_DATA_API}/properties/${propertyId}:runReport`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dateRanges: [{ startDate: `${days}daysAgo`, endDate: 'today' }],
+              dimensions: [{ name: 'sessionSource' }, { name: 'sessionMedium' }],
+              metrics: [{ name: 'sessions' }, { name: 'activeUsers' }, { name: 'bounceRate' }],
+              orderBys: [{ metric: { metricName: 'sessions' }, desc: true }],
+              limit: 15
+            })
+          });
+          
+          if (!response.ok) {
+            const error = await response.text();
+            return jsonResponse({ error: `Analytics API error: ${error}` }, 500);
+          }
+          
+          const data: any = await response.json();
+          const sources = (data.rows || []).map((row: any) => ({
+            source: row.dimensionValues[0].value || '(direct)',
+            medium: row.dimensionValues[1].value || '(none)',
+            sessions: Math.round(parseFloat(row.metricValues[0].value)),
+            users: Math.round(parseFloat(row.metricValues[1].value)),
+            bounceRate: (parseFloat(row.metricValues[2].value) * 100).toFixed(1)
+          }));
+          
+          return jsonResponse({ sources });
+        }
+
+        // GET geography
+        if (path === '/analytics/geography' && method === 'GET') {
+          const propertyId = url.searchParams.get('property_id');
+          const days = parseInt(url.searchParams.get('days') || '30');
+          
+          if (!propertyId) return jsonResponse({ error: 'property_id required' }, 400);
+          
+          const token = await getValidToken(db, userId, 'google_analytics', env);
+          if (!token) return jsonResponse({ error: 'Not connected' }, 401);
+          
+          const response = await fetch(`${ANALYTICS_DATA_API}/properties/${propertyId}:runReport`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dateRanges: [{ startDate: `${days}daysAgo`, endDate: 'today' }],
+              dimensions: [{ name: 'country' }],
+              metrics: [{ name: 'activeUsers' }, { name: 'sessions' }],
+              orderBys: [{ metric: { metricName: 'activeUsers' }, desc: true }],
+              limit: 20
+            })
+          });
+          
+          if (!response.ok) {
+            const error = await response.text();
+            return jsonResponse({ error: `Analytics API error: ${error}` }, 500);
+          }
+          
+          const data: any = await response.json();
+          const countries = (data.rows || []).map((row: any) => ({
+            country: row.dimensionValues[0].value || 'Unknown',
+            users: Math.round(parseFloat(row.metricValues[0].value)),
+            sessions: Math.round(parseFloat(row.metricValues[1].value))
+          }));
+          
+          return jsonResponse({ countries });
+        }
+
+        // GET realtime
+        if (path === '/analytics/realtime' && method === 'GET') {
+          const propertyId = url.searchParams.get('property_id');
+          
+          if (!propertyId) return jsonResponse({ error: 'property_id required' }, 400);
+          
+          const token = await getValidToken(db, userId, 'google_analytics', env);
+          if (!token) return jsonResponse({ error: 'Not connected' }, 401);
+          
+          const response = await fetch(`${ANALYTICS_DATA_API}/properties/${propertyId}:runRealtimeReport`, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              dimensions: [{ name: 'country' }],
+              metrics: [{ name: 'activeUsers' }]
+            })
+          });
+          
+          if (!response.ok) {
+            const error = await response.text();
+            return jsonResponse({ error: `Analytics API error: ${error}` }, 500);
+          }
+          
+          const data: any = await response.json();
+          
+          let activeUsers = 0;
+          const byCountry: any[] = [];
+          
+          if (data.rows) {
+            for (const row of data.rows) {
+              const users = parseInt(row.metricValues[0].value);
+              activeUsers += users;
+              byCountry.push({
+                country: row.dimensionValues[0].value,
+                users
+              });
+            }
+          }
+          
+          return jsonResponse({ activeUsers, byCountry });
+        }
+
         // ==================== CHECKINS (Activity Thread) ====================
         
         // GET checkins list

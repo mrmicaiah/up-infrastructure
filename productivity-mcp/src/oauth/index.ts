@@ -8,6 +8,7 @@ export const DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3';
 export const GMAIL_API_URL = 'https://gmail.googleapis.com/gmail/v1';
 export const BLOGGER_API_URL = 'https://www.googleapis.com/blogger/v3';
 export const PEOPLE_API_URL = 'https://people.googleapis.com/v1';
+export const ANALYTICS_DATA_API = 'https://analyticsdata.googleapis.com/v1beta';
 
 // GitHub OAuth
 export const GITHUB_OAUTH_URL = 'https://github.com/login/oauth/authorize';
@@ -24,6 +25,7 @@ export const OAUTH_SCOPES: Record<string, string> = {
   'blogger_company': 'https://www.googleapis.com/auth/blogger',
   'google_contacts_personal': 'https://www.googleapis.com/auth/contacts.readonly',
   'google_contacts_company': 'https://www.googleapis.com/auth/contacts.readonly',
+  'google_analytics': 'https://www.googleapis.com/auth/analytics.readonly',
   'github': 'repo,user',
 };
 
@@ -37,6 +39,7 @@ export const SERVICE_NAMES: Record<string, string> = {
   'blogger_company': 'Company Blogger',
   'google_contacts_personal': 'Personal Contacts',
   'google_contacts_company': 'Company Contacts',
+  'google_analytics': 'Google Analytics',
   'github': 'GitHub',
 };
 

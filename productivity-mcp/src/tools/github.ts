@@ -4,8 +4,142 @@ import { z } from "zod";
 import type { ToolContext } from '../types';
 import { getGitHubToken, buildGitHubOAuthUrl, GITHUB_API_URL } from '../oauth';
 
+// Helper to check if a repo is protected
+async function isRepoProtected(db: any, repo: string): Promise<{ protected: boolean; reason?: string }> {
+  // Normalize repo name - could be "courier" or "mrmicaiah/courier"
+  const result = await db.prepare(
+    'SELECT * FROM protected_repos WHERE repo = ? OR repo LIKE ?'
+  ).bind(repo, '%/' + repo).first();
+  
+  if (result) {
+    return { protected: true, reason: result.reason };
+  }
+  return { protected: false };
+}
+
+// Helper to normalize repo path
+async function normalizeRepoPath(token: string, repo: string): Promise<string> {
+  if (repo.includes('/')) {
+    return repo;
+  }
+  
+  const userResp = await fetch(GITHUB_API_URL + "/user", {
+    headers: { 
+      Authorization: "Bearer " + token,
+      "User-Agent": "UntitledPublishers-MCP",
+      Accept: "application/vnd.github.v3+json",
+    }
+  });
+  
+  if (!userResp.ok) {
+    throw new Error("Could not get GitHub user");
+  }
+  
+  const user: any = await userResp.json();
+  return user.login + "/" + repo;
+}
+
 export function registerGitHubTools(ctx: ToolContext) {
   const { server, env, getCurrentUser } = ctx;
+
+  // ==================== PROTECTED REPOS TOOLS ====================
+
+  server.tool("github_protect_repo", {
+    repo: z.string().describe("Repository to protect (e.g., 'mrmicaiah/courier' or 'courier')"),
+    reason: z.string().optional().describe("Reason for protection"),
+  }, async ({ repo, reason }) => {
+    const db = env.DB;
+    const user = getCurrentUser();
+    const token = await getGitHubToken(env, user);
+    
+    if (!token) {
+      return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
+    }
+    
+    // Normalize the repo path
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      return { content: [{ type: "text", text: "❌ Could not resolve repo path" }] };
+    }
+    
+    // Check if already protected
+    const existing = await db.prepare('SELECT * FROM protected_repos WHERE repo = ?').bind(repoPath).first();
+    if (existing) {
+      return { content: [{ type: "text", text: `ℹ️ **${repoPath}** is already protected.\n\nProtected by: ${existing.protected_by}\nProtected at: ${existing.protected_at}${existing.reason ? '\nReason: ' + existing.reason : ''}` }] };
+    }
+    
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    
+    await db.prepare(
+      'INSERT INTO protected_repos (id, repo, protected_by, protected_at, reason) VALUES (?, ?, ?, ?, ?)'
+    ).bind(id, repoPath, user, now, reason || null).run();
+    
+    return { content: [{ type: "text", text: `🔒 **${repoPath}** is now protected.\n\nWrite operations (push_file, push_files) will be blocked until you unprotect it.${reason ? '\n\nReason: ' + reason : ''}` }] };
+  });
+
+  server.tool("github_unprotect_repo", {
+    repo: z.string().describe("Repository to unprotect"),
+  }, async ({ repo }) => {
+    const db = env.DB;
+    const token = await getGitHubToken(env, getCurrentUser());
+    
+    if (!token) {
+      return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
+    }
+    
+    // Try to normalize, but also try direct match
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      repoPath = repo;
+    }
+    
+    // Try both the normalized path and the original input
+    const result = await db.prepare(
+      'DELETE FROM protected_repos WHERE repo = ? OR repo = ? OR repo LIKE ?'
+    ).bind(repoPath, repo, '%/' + repo).run();
+    
+    if (result.meta?.changes === 0) {
+      return { content: [{ type: "text", text: `ℹ️ **${repo}** was not protected.` }] };
+    }
+    
+    return { content: [{ type: "text", text: `🔓 **${repoPath}** is now unprotected.\n\nWrite operations are now allowed. Remember to re-protect it when you're done!` }] };
+  });
+
+  server.tool("github_list_protected", {}, async () => {
+    const db = env.DB;
+    
+    try {
+      const results = await db.prepare('SELECT * FROM protected_repos ORDER BY protected_at DESC').all();
+      
+      if (!results.results || results.results.length === 0) {
+        return { content: [{ type: "text", text: "📂 No repositories are currently protected.\n\nUse `github_protect_repo` to protect a repo from accidental writes." }] };
+      }
+      
+      let out = "🔒 **Protected Repositories**\n\n";
+      
+      for (const r of results.results as any[]) {
+        out += `• **${r.repo}**\n`;
+        out += `  Protected by: ${r.protected_by} on ${new Date(r.protected_at).toLocaleDateString()}\n`;
+        if (r.reason) out += `  Reason: ${r.reason}\n`;
+        out += "\n";
+      }
+      
+      out += "_Use `github_unprotect_repo` to temporarily allow writes._";
+      
+      return { content: [{ type: "text", text: out }] };
+      
+    } catch (e: any) {
+      if (e.message?.includes('no such table')) {
+        return { content: [{ type: "text", text: "❌ Protected repos table not created yet. Run the migration:\n```\nnpx wrangler d1 execute productivity-brain --remote --file=productivity-mcp/migrations/011-protected-repos.sql\n```" }] };
+      }
+      return { content: [{ type: "text", text: "❌ Error: " + e.message }] };
+    }
+  });
 
   // ==================== DEPLOY STATUS TOOLS ====================
   
@@ -182,20 +316,17 @@ export function registerGitHubTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
     }
     
-    let repoPath = repo;
-    if (!repo.includes('/')) {
-      const userResp = await fetch(GITHUB_API_URL + "/user", {
-        headers: { 
-          Authorization: "Bearer " + token,
-          "User-Agent": "UntitledPublishers-MCP",
-          Accept: "application/vnd.github.v3+json",
-        }
-      });
-      if (!userResp.ok) {
-        return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
-      }
-      const user: any = await userResp.json();
-      repoPath = user.login + "/" + repo;
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
+    }
+    
+    // Check if repo is protected
+    const protection = await isRepoProtected(env.DB, repoPath);
+    if (protection.protected) {
+      return { content: [{ type: "text", text: `🔒 **${repoPath}** is protected.\n\nWrite operations are blocked to prevent accidental changes.${protection.reason ? '\n\nReason: ' + protection.reason : ''}\n\n_To make changes, first run \`github_unprotect_repo\` for this repo, then re-protect it when done._` }] };
     }
     
     let sha: string | undefined;
@@ -254,20 +385,17 @@ export function registerGitHubTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
     }
     
-    let repoPath = repo;
-    if (!repo.includes('/')) {
-      const userResp = await fetch(GITHUB_API_URL + "/user", {
-        headers: { 
-          Authorization: "Bearer " + token,
-          "User-Agent": "UntitledPublishers-MCP",
-          Accept: "application/vnd.github.v3+json",
-        }
-      });
-      if (!userResp.ok) {
-        return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
-      }
-      const user: any = await userResp.json();
-      repoPath = user.login + "/" + repo;
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
+    }
+    
+    // Check if repo is protected
+    const protection = await isRepoProtected(env.DB, repoPath);
+    if (protection.protected) {
+      return { content: [{ type: "text", text: `🔒 **${repoPath}** is protected.\n\nWrite operations are blocked to prevent accidental changes.${protection.reason ? '\n\nReason: ' + protection.reason : ''}\n\n_To make changes, first run \`github_unprotect_repo\` for this repo, then re-protect it when done._` }] };
     }
     
     const refResp = await fetch(GITHUB_API_URL + "/repos/" + repoPath + "/git/ref/heads/" + branch, {
@@ -401,20 +529,11 @@ export function registerGitHubTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
     }
     
-    let repoPath = repo;
-    if (!repo.includes('/')) {
-      const userResp = await fetch(GITHUB_API_URL + "/user", {
-        headers: { 
-          Authorization: "Bearer " + token,
-          "User-Agent": "UntitledPublishers-MCP",
-          Accept: "application/vnd.github.v3+json",
-        }
-      });
-      if (!userResp.ok) {
-        return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
-      }
-      const user: any = await userResp.json();
-      repoPath = user.login + "/" + repo;
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
     }
     
     const resp = await fetch(GITHUB_API_URL + "/repos/" + repoPath + "/pages", {
@@ -465,20 +584,11 @@ export function registerGitHubTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
     }
     
-    let repoPath = repo;
-    if (!repo.includes('/')) {
-      const userResp = await fetch(GITHUB_API_URL + "/user", {
-        headers: { 
-          Authorization: "Bearer " + token,
-          "User-Agent": "UntitledPublishers-MCP",
-          Accept: "application/vnd.github.v3+json",
-        }
-      });
-      if (!userResp.ok) {
-        return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
-      }
-      const user: any = await userResp.json();
-      repoPath = user.login + "/" + repo;
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
     }
     
     const resp = await fetch(GITHUB_API_URL + "/repos/" + repoPath + "/contents/" + path + "?ref=" + branch, {
@@ -515,20 +625,11 @@ export function registerGitHubTools(ctx: ToolContext) {
       return { content: [{ type: "text", text: "❌ GitHub not connected. Run: connect_service github" }] };
     }
     
-    let repoPath = repo;
-    if (!repo.includes('/')) {
-      const userResp = await fetch(GITHUB_API_URL + "/user", {
-        headers: { 
-          Authorization: "Bearer " + token,
-          "User-Agent": "UntitledPublishers-MCP",
-          Accept: "application/vnd.github.v3+json",
-        }
-      });
-      if (!userResp.ok) {
-        return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
-      }
-      const user: any = await userResp.json();
-      repoPath = user.login + "/" + repo;
+    let repoPath: string;
+    try {
+      repoPath = await normalizeRepoPath(token, repo);
+    } catch (e) {
+      return { content: [{ type: "text", text: "❌ Could not get GitHub user" }] };
     }
     
     const apiPath = path ? "/contents/" + path : "/contents";

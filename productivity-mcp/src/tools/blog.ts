@@ -1,7 +1,8 @@
-// Blog tools 
+// Blog tools
 // Two APIs supported:
 // 1. micaiahbussey.com via email-bot API (mb_ prefixed tools)
 // 2. Multi-tenant UP Blogs via up-blogs-1 worker (up_blog_ prefixed tools)
+// Last updated: 2026-01-29
 
 import { z } from "zod";
 import type { ToolContext } from '../types';

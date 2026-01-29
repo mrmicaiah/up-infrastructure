@@ -25,7 +25,7 @@
  * SEO:
  *   Full meta tags, Open Graph, Twitter Cards, Schema.org JSON-LD, sitemap.xml
  * 
- * Last updated: 2026-01-28 - Added likes/reactions system
+ * Last updated: 2026-01-29 - Added GET single post endpoint
  */
 
 const CORS_HEADERS = {
@@ -773,7 +773,7 @@ export default {
     
     // Health check
     if (path === '/' || path === '/health') {
-      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '1.8.0' });
+      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '1.9.0' });
     }
     
     // GET /blogs - List all blogs (public, no API keys exposed)
@@ -1061,6 +1061,42 @@ export default {
         }
         
         return jsonResponse({ posts });
+      }
+      
+      // GET /:blogId/posts/:slugOrId - Get single post by slug or ID (authenticated)
+      if (route.startsWith('posts/') && route.split('/').length === 2 && request.method === 'GET') {
+        // Skip if this is a like/likes endpoint
+        const routeParts = route.split('/');
+        if (routeParts[1] === 'like' || routeParts[1] === 'likes') {
+          // Fall through to public endpoints below
+        } else {
+          if (!await requireAuth()) return jsonResponse({ error: 'Unauthorized' }, 401);
+          
+          const slugOrId = routeParts[1];
+          const postsJson = await env.BLOGS.get(`blog:${blogId}:posts`);
+          const posts = postsJson ? JSON.parse(postsJson) : [];
+          
+          // Find by slug first, then by ID
+          let post = posts.find(p => p.slug === slugOrId);
+          if (!post) {
+            post = posts.find(p => p.id === slugOrId);
+          }
+          
+          if (!post) {
+            return jsonResponse({ error: 'Post not found' }, 404);
+          }
+          
+          // Add generated excerpt
+          const excerpt = generateExcerpt(post.content, 200);
+          
+          return jsonResponse({
+            post: {
+              ...post,
+              excerpt,
+              tags: post.tags || []
+            }
+          });
+        }
       }
       
       // DELETE /:blogId/posts/:postId

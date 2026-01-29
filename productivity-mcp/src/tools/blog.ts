@@ -89,6 +89,67 @@ export function registerBlogTools(ctx: ToolContext) {
   // UP BLOGS TOOLS (up-blogs-1 worker)
   // ========================================
 
+  // Admin tool: Register a new blog
+  server.tool("up_blog_register", {
+    blog_id: z.string().describe("URL-safe identifier (e.g., 'micaiah-bussey', 'proverbs-library')"),
+    site_name: z.string().describe("Display name for the blog (e.g., 'Micaiah Bussey')"),
+    site_url: z.string().describe("Full URL (e.g., 'https://micaiahbussey.com')"),
+    site_description: z.string().optional().describe("Blog description for SEO"),
+    author_name: z.string().optional().describe("Default author name"),
+    author_id: z.string().optional().describe("Author ID from authors table"),
+    courier_list_slug: z.string().optional().describe("Courier list slug for email subscriptions"),
+    github_repo: z.string().optional().describe("GitHub repo for static publishing (owner/repo format)"),
+    github_token: z.string().optional().describe("GitHub token for pushing files"),
+    twitter_handle: z.string().optional().describe("Twitter handle for cards (e.g., '@micaiah')"),
+    favicon: z.string().optional().describe("Favicon URL"),
+    default_image: z.string().optional().describe("Default OG image URL"),
+    site_colors: z.object({
+      primary: z.string().optional().describe("Primary color hex (e.g., '#2563eb')"),
+      lightBg: z.string().optional().describe("Light background color hex (e.g., '#f3f4f6')"),
+    }).optional().describe("Site color scheme"),
+  }, async ({ blog_id, site_name, site_url, site_description, author_name, author_id, courier_list_slug, github_repo, github_token, twitter_handle, favicon, default_image, site_colors }) => {
+    try {
+      const adminKey = env.UP_BLOGS_ADMIN_KEY;
+      if (!adminKey) {
+        return { content: [{ type: "text", text: `⛔ UP_BLOGS_ADMIN_KEY not configured. Set this secret to enable blog registration.` }] };
+      }
+      
+      const payload: any = {
+        blog_id,
+        site_name,
+        site_url,
+      };
+      
+      if (site_description) payload.site_description = site_description;
+      if (author_name) payload.author_name = author_name;
+      if (author_id) payload.author_id = author_id;
+      if (courier_list_slug) payload.courier_list_slug = courier_list_slug;
+      if (github_repo) payload.github_repo = github_repo;
+      if (github_token) payload.github_token = github_token;
+      if (twitter_handle) payload.twitter_handle = twitter_handle;
+      if (favicon) payload.favicon = favicon;
+      if (default_image) payload.default_image = default_image;
+      if (site_colors) payload.site_colors = site_colors;
+      
+      const result: any = await upBlogsRequest(env, null, '/admin/register', 'POST', payload, adminKey);
+      
+      let out = `✅ **Blog Registered Successfully!**\n\n`;
+      out += `**Blog ID:** ${result.blog_id}\n`;
+      out += `**API Key:** \`${result.api_key}\`\n\n`;
+      out += `⚠️ **IMPORTANT:** Save this API key now! It cannot be retrieved later.\n\n`;
+      out += `To use this blog with MCP tools, set the secret:\n`;
+      out += `\`\`\`\n`;
+      out += `npx wrangler secret put BLOG_API_KEY_${blog_id.toUpperCase().replace(/-/g, '_')}\n`;
+      out += `npx wrangler secret put BLOG_API_KEY_${blog_id.toUpperCase().replace(/-/g, '_')} --config wrangler-irene.jsonc\n`;
+      out += `\`\`\`\n`;
+      out += `Or set UP_BLOGS_API_KEY if this is your only/default blog.`;
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
   server.tool("up_blog_list_blogs", {}, async () => {
     try {
       const result: any = await upBlogsRequest(env, null, '/blogs');

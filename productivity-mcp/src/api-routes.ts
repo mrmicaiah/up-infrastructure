@@ -3,6 +3,7 @@
 interface Env {
   DB: D1Database;
   USER_ID: string;
+  TEAM?: string;
   DASHBOARD_API_KEY?: string;
   BETHANY_API_KEY?: string;
   GOOGLE_CLIENT_ID: string;
@@ -12,7 +13,7 @@ interface Env {
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-GitHub-Event, X-Hub-Signature-256',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-GitHub-Event, X-Hub-Signature-256, X-User-Id',
 };
 
 function jsonResponse(data: any, status = 200) {
@@ -84,9 +85,516 @@ export function createApiRoutes(env: Env) {
       }
 
       try {
+
+        // ==================== TASK STATS (NEW) ====================
+        
+        // GET /api/tasks/stats - Dashboard statistics
+        if (path === '/tasks/stats' && method === 'GET') {
+          const today = new Date().toISOString().split('T')[0];
+          const startOfWeek = new Date();
+          startOfWeek.setDate(startOfWeek.getDate() - startOfWeek.getDay());
+          const weekStart = startOfWeek.toISOString().split('T')[0];
+          
+          const openResult = await db.prepare(
+            `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'open'`
+          ).bind(userId).first() as any;
+          
+          const activeResult = await db.prepare(
+            `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'open' AND (is_active = 1 OR objective_id IS NOT NULL)`
+          ).bind(userId).first() as any;
+          
+          const doneTodayResult = await db.prepare(
+            `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'done' AND date(completed_at) = ?`
+          ).bind(userId, today).first() as any;
+          
+          const doneWeekResult = await db.prepare(
+            `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'done' AND date(completed_at) >= ?`
+          ).bind(userId, weekStart).first() as any;
+          
+          const overdueResult = await db.prepare(
+            `SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'open' AND due_date < date('now')`
+          ).bind(userId).first() as any;
+          
+          return jsonResponse({
+            open_count: openResult?.count || 0,
+            active_count: activeResult?.count || 0,
+            done_today: doneTodayResult?.count || 0,
+            done_this_week: doneWeekResult?.count || 0,
+            overdue_count: overdueResult?.count || 0
+          });
+        }
+
+        // ==================== SPRINTS/CURRENT (NEW) ====================
+        
+        // GET /api/sprints/current - Current sprint with objectives and task counts
+        if (path === '/sprints/current' && method === 'GET') {
+          const sprint = await db.prepare(`
+            SELECT * FROM sprints WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1
+          `).bind(userId).first() as any;
+          
+          if (!sprint) {
+            return jsonResponse({ sprint: null });
+          }
+          
+          const objectives = await db.prepare(`
+            SELECT * FROM objectives WHERE sprint_id = ? ORDER BY sort_order ASC
+          `).bind(sprint.id).all();
+          
+          const objectivesWithCounts = [];
+          for (const obj of (objectives.results || []) as any[]) {
+            const openCount = await db.prepare(
+              "SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'open'"
+            ).bind(obj.id, userId).first() as any;
+            
+            const doneCount = await db.prepare(
+              "SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'done'"
+            ).bind(obj.id, userId).first() as any;
+            
+            objectivesWithCounts.push({
+              id: obj.id,
+              statement: obj.statement,
+              sort_order: obj.sort_order,
+              open_tasks: openCount?.c || 0,
+              done_tasks: doneCount?.c || 0,
+              total_tasks: (openCount?.c || 0) + (doneCount?.c || 0)
+            });
+          }
+          
+          const now = new Date();
+          const endDate = new Date(sprint.end_date);
+          const daysRemaining = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+          
+          let workDays = 0;
+          const tempDate = new Date(now);
+          while (tempDate <= endDate) {
+            const dow = tempDate.getDay();
+            if (dow !== 0 && dow !== 6) workDays++;
+            tempDate.setDate(tempDate.getDate() + 1);
+          }
+          
+          const totalOpen = objectivesWithCounts.reduce((sum, o) => sum + o.open_tasks, 0);
+          const totalDone = objectivesWithCounts.reduce((sum, o) => sum + o.done_tasks, 0);
+          const totalTasks = totalOpen + totalDone;
+          const progress = totalTasks > 0 ? Math.round((totalDone / totalTasks) * 100) : 0;
+          
+          return jsonResponse({
+            sprint: {
+              ...sprint,
+              days_remaining: daysRemaining,
+              work_days_remaining: workDays,
+              progress,
+              total_tasks: totalTasks,
+              done_tasks: totalDone,
+              objectives: objectivesWithCounts
+            }
+          });
+        }
+
+        // ==================== ROUTINES/TODAY (NEW) ====================
+        
+        // GET /api/routines/today - Today's recurring tasks
+        if (path === '/routines/today' && method === 'GET') {
+          const today = new Date();
+          const dayOfWeek = today.getDay();
+          const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+          const todayName = dayNames[dayOfWeek];
+          const isWeekday = dayOfWeek !== 0 && dayOfWeek !== 6;
+          const todayStr = today.toISOString().split('T')[0];
+          
+          const routines = await db.prepare(`
+            SELECT * FROM tasks 
+            WHERE user_id = ? AND status = 'open' AND recurrence IS NOT NULL
+            AND (snoozed_until IS NULL OR snoozed_until <= date('now'))
+            ORDER BY priority DESC, text ASC
+          `).bind(userId).all();
+          
+          const todayRoutines = (routines.results || []).filter((task: any) => {
+            const rec = task.recurrence?.toLowerCase() || '';
+            if (rec === 'daily') return true;
+            if (rec === 'weekdays' && isWeekday) return true;
+            if (rec === 'weekly' || rec === 'biweekly' || rec === 'monthly' || rec === 'yearly') {
+              if (!task.due_date) return true;
+              return task.due_date === todayStr;
+            }
+            if (rec.includes(',') || dayNames.some(d => rec === d)) {
+              const days = rec.split(',').map((d: string) => d.trim().toLowerCase());
+              return days.includes(todayName);
+            }
+            return false;
+          });
+          
+          return jsonResponse({ routines: todayRoutines });
+        }
+
+        // ==================== UPCOMING (NEW) ====================
+        
+        // GET /api/upcoming - Tasks due in next N days
+        if (path === '/upcoming' && method === 'GET') {
+          const days = parseInt(url.searchParams.get('days') || '7');
+          const futureDate = new Date();
+          futureDate.setDate(futureDate.getDate() + days);
+          const futureDateStr = futureDate.toISOString().split('T')[0];
+          
+          const upcoming = await db.prepare(`
+            SELECT t.*, o.statement as objective_statement
+            FROM tasks t
+            LEFT JOIN objectives o ON t.objective_id = o.id
+            WHERE t.user_id = ? 
+              AND t.status = 'open' 
+              AND t.due_date IS NOT NULL 
+              AND t.due_date <= ?
+              AND t.due_date >= date('now')
+              AND (t.snoozed_until IS NULL OR t.snoozed_until <= date('now'))
+            ORDER BY t.due_date ASC, t.priority DESC
+          `).bind(userId, futureDateStr).all();
+          
+          return jsonResponse({ tasks: upcoming.results || [] });
+        }
+
+        // ==================== ENHANCED TASKS LIST ====================
+        
+        // GET /api/tasks - Task list with enhanced filters
+        if (path === '/tasks' && method === 'GET') {
+          const status = url.searchParams.get('status') || 'open';
+          const category = url.searchParams.get('category');
+          const activeOnly = url.searchParams.get('active_only') === 'true';
+          const includeSnoozed = url.searchParams.get('include_snoozed') === 'true';
+          
+          let query = `
+            SELECT t.*, o.statement as objective_statement 
+            FROM tasks t 
+            LEFT JOIN objectives o ON t.objective_id = o.id 
+            WHERE t.user_id = ?
+          `;
+          const params: any[] = [userId];
+          
+          if (status !== 'all') {
+            query += ` AND t.status = ?`;
+            params.push(status);
+          }
+          
+          if (category) {
+            query += ` AND t.category = ?`;
+            params.push(category);
+          }
+          
+          if (activeOnly) {
+            query += ` AND (t.is_active = 1 OR t.objective_id IS NOT NULL)`;
+          }
+          
+          if (!includeSnoozed) {
+            query += ` AND (t.snoozed_until IS NULL OR t.snoozed_until <= date('now'))`;
+          }
+          
+          query += ` ORDER BY t.priority DESC, t.due_date ASC NULLS LAST, t.created_at ASC`;
+          
+          const tasks = await db.prepare(query).bind(...params).all();
+          return jsonResponse({ tasks: tasks.results || [] });
+        }
+
+        // ==================== ENHANCED COMPLETE TASK ====================
+        
+        // POST /api/tasks/:id/complete - Complete with recurring logic
+        const completeMatch = path.match(/^\/tasks\/([^/]+)\/complete$/);
+        if (completeMatch && method === 'POST') {
+          const taskId = completeMatch[1];
+          const task = await db.prepare(
+            'SELECT * FROM tasks WHERE id = ? AND user_id = ?'
+          ).bind(taskId, userId).first() as any;
+          
+          if (!task) return jsonResponse({ error: 'Task not found' }, 404);
+          
+          const completedAt = new Date().toISOString();
+          
+          // Handle recurring tasks
+          if (task.recurrence) {
+            let nextDate = new Date();
+            const recurrence = task.recurrence.toLowerCase();
+            
+            if (recurrence === 'daily') {
+              nextDate.setDate(nextDate.getDate() + 1);
+            } else if (recurrence === 'weekdays') {
+              do {
+                nextDate.setDate(nextDate.getDate() + 1);
+              } while (nextDate.getDay() === 0 || nextDate.getDay() === 6);
+            } else if (recurrence === 'weekly') {
+              nextDate.setDate(nextDate.getDate() + 7);
+            } else if (recurrence === 'biweekly') {
+              nextDate.setDate(nextDate.getDate() + 14);
+            } else if (recurrence === 'monthly') {
+              nextDate.setMonth(nextDate.getMonth() + 1);
+            } else if (recurrence === 'yearly') {
+              nextDate.setFullYear(nextDate.getFullYear() + 1);
+            } else if (recurrence.includes(',')) {
+              const days = recurrence.split(',').map((d: string) => d.trim().toLowerCase());
+              const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+              const targetDays = days.map((d: string) => dayMap[d]).filter((d: number) => d !== undefined);
+              
+              if (targetDays.length > 0) {
+                do {
+                  nextDate.setDate(nextDate.getDate() + 1);
+                } while (!targetDays.includes(nextDate.getDay()));
+              }
+            }
+            
+            await db.prepare(`
+              UPDATE tasks SET due_date = ?, last_touched = ? WHERE id = ? AND user_id = ?
+            `).bind(nextDate.toISOString().split('T')[0], completedAt, taskId, userId).run();
+            
+            try {
+              await db.prepare(`
+                INSERT INTO task_events (id, user_id, task_id, event_type, event_data, created_at)
+                VALUES (?, ?, ?, 'recurring_completed', ?, ?)
+              `).bind(crypto.randomUUID(), userId, taskId, JSON.stringify({ next_date: nextDate.toISOString().split('T')[0] }), completedAt).run();
+            } catch (e) { /* ignore */ }
+            
+            return jsonResponse({ 
+              success: true, 
+              recurring: true,
+              next_date: nextDate.toISOString().split('T')[0],
+              message: 'Recurring task reset to next occurrence' 
+            });
+          }
+          
+          await db.prepare(`
+            UPDATE tasks SET status = 'done', completed_at = ?, is_active = 0 WHERE id = ? AND user_id = ?
+          `).bind(completedAt, taskId, userId).run();
+          
+          return jsonResponse({ success: true, recurring: false, message: 'Task completed' });
+        }
+
+        // ==================== CREATE TASK ====================
+        
+        if (path === '/tasks' && method === 'POST') {
+          const body = await request.json() as any;
+          const { text, category, priority, due_date, dueDate, project, notes, is_active } = body;
+          
+          if (!text?.trim()) {
+            return jsonResponse({ error: 'text is required' }, 400);
+          }
+          
+          const id = crypto.randomUUID();
+          const now = new Date().toISOString();
+          
+          await db.prepare(`
+            INSERT INTO tasks (id, user_id, text, category, priority, due_date, project, notes, is_active, status, created_at, last_touched) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+          `).bind(
+            id, userId, text.trim(), 
+            category || 'General', 
+            priority || 3, 
+            due_date || dueDate || null,
+            project || null,
+            notes || null,
+            is_active ? 1 : 0,
+            now, now
+          ).run();
+          
+          return jsonResponse({ success: true, id, message: 'Task created' });
+        }
+
+        // ==================== TASK ACTIONS ====================
+        
+        // PUT /api/tasks/:id
+        const updateTaskMatch = path.match(/^\/tasks\/([^/]+)$/);
+        if (updateTaskMatch && method === 'PUT') {
+          const taskId = updateTaskMatch[1];
+          const body = await request.json() as any;
+          const { text, category, priority, due_date, project, notes, is_active } = body;
+          
+          const updates: string[] = [];
+          const params: any[] = [];
+          
+          if (text !== undefined) { updates.push('text = ?'); params.push(text); }
+          if (category !== undefined) { updates.push('category = ?'); params.push(category); }
+          if (priority !== undefined) { updates.push('priority = ?'); params.push(priority); }
+          if (due_date !== undefined) { updates.push('due_date = ?'); params.push(due_date); }
+          if (project !== undefined) { updates.push('project = ?'); params.push(project); }
+          if (notes !== undefined) { updates.push('notes = ?'); params.push(notes); }
+          if (is_active !== undefined) { updates.push('is_active = ?'); params.push(is_active ? 1 : 0); }
+          
+          if (updates.length === 0) {
+            return jsonResponse({ error: 'No fields to update' }, 400);
+          }
+          
+          updates.push("last_touched = datetime('now')");
+          params.push(taskId, userId);
+          
+          await db.prepare(`
+            UPDATE tasks SET ${updates.join(', ')} WHERE id = ? AND user_id = ?
+          `).bind(...params).run();
+          
+          return jsonResponse({ success: true, message: 'Task updated' });
+        }
+
+        // DELETE /api/tasks/:id
+        const deleteTaskMatch = path.match(/^\/tasks\/([^/]+)$/);
+        if (deleteTaskMatch && method === 'DELETE') {
+          const taskId = deleteTaskMatch[1];
+          await db.prepare('DELETE FROM tasks WHERE id = ? AND user_id = ?').bind(taskId, userId).run();
+          return jsonResponse({ success: true, message: 'Task deleted' });
+        }
+
+        // POST /api/tasks/:id/activate
+        const activateMatch = path.match(/^\/tasks\/([^/]+)\/activate$/);
+        if (activateMatch && method === 'POST') {
+          const taskId = activateMatch[1];
+          await db.prepare(`UPDATE tasks SET is_active = 1, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
+          return jsonResponse({ success: true, message: 'Task activated' });
+        }
+
+        // POST /api/tasks/:id/deactivate
+        const deactivateMatch = path.match(/^\/tasks\/([^/]+)\/deactivate$/);
+        if (deactivateMatch && method === 'POST') {
+          const taskId = deactivateMatch[1];
+          await db.prepare(`UPDATE tasks SET is_active = 0, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
+          return jsonResponse({ success: true, message: 'Task deactivated' });
+        }
+
+        // POST /api/tasks/:id/restore
+        const restoreMatch = path.match(/^\/tasks\/([^/]+)\/restore$/);
+        if (restoreMatch && method === 'POST') {
+          const taskId = restoreMatch[1];
+          await db.prepare(`UPDATE tasks SET status = 'open', completed_at = NULL, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
+          return jsonResponse({ success: true, message: 'Task restored' });
+        }
+
+        // POST /api/tasks/:id/claim
+        const claimMatch = path.match(/^\/tasks\/([^/]+)\/claim$/);
+        if (claimMatch && method === 'POST') {
+          const taskId = claimMatch[1];
+          await db.prepare(`UPDATE tasks SET assigned_by = NULL, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
+          return jsonResponse({ success: true, message: 'Task claimed' });
+        }
+
+        // ==================== SPRINT ENDPOINTS ====================
+        
+        // GET /api/sprint (legacy)
+        if (path === '/sprint' && method === 'GET') {
+          const sprint = await db.prepare(`SELECT * FROM sprints WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`).bind(userId).first();
+          if (!sprint) return jsonResponse({ sprint: null });
+          const objectives = await db.prepare(`SELECT * FROM objectives WHERE sprint_id = ? ORDER BY sort_order ASC`).bind(sprint.id).all();
+          return jsonResponse({ sprint: { ...sprint, objectives: objectives.results || [] } });
+        }
+
+        // GET /api/sprints
+        if (path === '/sprints' && method === 'GET') {
+          const status = url.searchParams.get('status');
+          let query = 'SELECT * FROM sprints WHERE user_id = ?';
+          const params: any[] = [userId];
+          
+          if (status && status !== 'all') {
+            query += ' AND status = ?';
+            params.push(status);
+          }
+          
+          query += ' ORDER BY created_at DESC';
+          
+          const sprints = await db.prepare(query).bind(...params).all();
+          return jsonResponse({ sprints: sprints.results || [] });
+        }
+
+        // POST /api/sprints
+        if (path === '/sprints' && method === 'POST') {
+          const body = await request.json() as any;
+          const { name, end_date } = body;
+          
+          if (!name || !end_date) {
+            return jsonResponse({ error: 'name and end_date required' }, 400);
+          }
+          
+          const id = crypto.randomUUID();
+          const now = new Date().toISOString();
+          
+          await db.prepare(`
+            INSERT INTO sprints (id, user_id, name, end_date, status, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'active', ?, ?)
+          `).bind(id, userId, name, end_date, now, now).run();
+          
+          return jsonResponse({ success: true, id, message: 'Sprint created' });
+        }
+
+        // POST /api/sprints/:id/objectives
+        const addObjectiveMatch = path.match(/^\/sprints\/([^/]+)\/objectives$/);
+        if (addObjectiveMatch && method === 'POST') {
+          const sprintId = addObjectiveMatch[1];
+          const body = await request.json() as any;
+          const { statement } = body;
+          
+          if (!statement?.trim()) {
+            return jsonResponse({ error: 'statement required' }, 400);
+          }
+          
+          const maxOrder = await db.prepare(
+            'SELECT MAX(sort_order) as max_order FROM objectives WHERE sprint_id = ?'
+          ).bind(sprintId).first() as any;
+          
+          const id = crypto.randomUUID();
+          const sortOrder = (maxOrder?.max_order || 0) + 1;
+          
+          await db.prepare(`
+            INSERT INTO objectives (id, sprint_id, user_id, statement, sort_order, created_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+          `).bind(id, sprintId, userId, statement.trim(), sortOrder).run();
+          
+          return jsonResponse({ success: true, id, message: 'Objective added' });
+        }
+
+        // POST /api/sprints/:id/tasks
+        const addSprintTaskMatch = path.match(/^\/sprints\/([^/]+)\/tasks$/);
+        if (addSprintTaskMatch && method === 'POST') {
+          const body = await request.json() as any;
+          const { taskId, objectiveId } = body;
+          
+          if (!taskId || !objectiveId) {
+            return jsonResponse({ error: 'taskId and objectiveId required' }, 400);
+          }
+          
+          const task = await db.prepare(
+            'SELECT category FROM tasks WHERE id = ? AND user_id = ?'
+          ).bind(taskId, userId).first() as any;
+          
+          await db.prepare(`
+            UPDATE tasks SET objective_id = ?, original_category = ?, last_touched = datetime('now')
+            WHERE id = ? AND user_id = ?
+          `).bind(objectiveId, task?.category || null, taskId, userId).run();
+          
+          return jsonResponse({ success: true, message: 'Task added to sprint' });
+        }
+
+        // DELETE /api/sprints/:id/tasks/:taskId
+        const removeSprintTaskMatch = path.match(/^\/sprints\/([^/]+)\/tasks\/([^/]+)$/);
+        if (removeSprintTaskMatch && method === 'DELETE') {
+          const taskId = removeSprintTaskMatch[2];
+          
+          const task = await db.prepare(
+            'SELECT original_category FROM tasks WHERE id = ? AND user_id = ?'
+          ).bind(taskId, userId).first() as any;
+          
+          await db.prepare(`
+            UPDATE tasks SET objective_id = NULL, category = COALESCE(?, category), original_category = NULL, last_touched = datetime('now')
+            WHERE id = ? AND user_id = ?
+          `).bind(task?.original_category, taskId, userId).run();
+          
+          return jsonResponse({ success: true, message: 'Task removed from sprint' });
+        }
+
+        // POST /api/sprints/:id/end
+        const endSprintMatch = path.match(/^\/sprints\/([^/]+)\/end$/);
+        if (endSprintMatch && method === 'POST') {
+          const sprintId = endSprintMatch[1];
+          const body = await request.json() as any;
+          const status = body.status || 'completed';
+          
+          await db.prepare(`
+            UPDATE sprints SET status = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?
+          `).bind(status, sprintId, userId).run();
+          
+          return jsonResponse({ success: true, message: `Sprint ${status}` });
+        }
+
         // ==================== ANALYTICS API ====================
         
-        // GET analytics properties + connection status
         if (path === '/analytics/properties' && method === 'GET') {
           const token = await getValidToken(db, userId, 'google_analytics', env);
           if (!token) {
@@ -103,7 +611,6 @@ export function createApiRoutes(env: Env) {
           });
         }
 
-        // GET analytics report
         if (path === '/analytics/report' && method === 'GET') {
           const propertyId = url.searchParams.get('property_id');
           const days = parseInt(url.searchParams.get('days') || '7');
@@ -137,7 +644,6 @@ export function createApiRoutes(env: Env) {
           
           const data: any = await response.json();
           
-          // Calculate totals and format daily data
           const totals = { pageViews: 0, sessions: 0, activeUsers: 0, bounceRate: 0, avgSessionDuration: 0 };
           const daily: any[] = [];
           
@@ -169,7 +675,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ totals, daily });
         }
 
-        // GET top content
         if (path === '/analytics/top-content' && method === 'GET') {
           const propertyId = url.searchParams.get('property_id');
           const days = parseInt(url.searchParams.get('days') || '30');
@@ -209,7 +714,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ pages });
         }
 
-        // GET traffic sources
         if (path === '/analytics/sources' && method === 'GET') {
           const propertyId = url.searchParams.get('property_id');
           const days = parseInt(url.searchParams.get('days') || '30');
@@ -248,7 +752,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ sources });
         }
 
-        // GET geography
         if (path === '/analytics/geography' && method === 'GET') {
           const propertyId = url.searchParams.get('property_id');
           const days = parseInt(url.searchParams.get('days') || '30');
@@ -285,7 +788,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ countries });
         }
 
-        // GET realtime
         if (path === '/analytics/realtime' && method === 'GET') {
           const propertyId = url.searchParams.get('property_id');
           
@@ -327,9 +829,64 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ activeUsers, byCountry });
         }
 
-        // ==================== CHECKINS (Activity Thread) ====================
+        // ==================== ACTIVITY / THREAD ====================
         
-        // GET checkins list
+        if (path === '/activity' && method === 'GET') {
+          const limit = parseInt(url.searchParams.get('limit') || '50');
+          const userFilter = url.searchParams.get('user');
+          const typeFilter = url.searchParams.get('type');
+          
+          const activities: any[] = [];
+          
+          if (!typeFilter || typeFilter === 'checkin') {
+            let query = 'SELECT *, "checkin" as activity_type FROM check_ins';
+            const params: any[] = [];
+            if (userFilter) {
+              query += ' WHERE user_id = ?';
+              params.push(userFilter);
+            }
+            query += ' ORDER BY created_at DESC LIMIT ?';
+            params.push(limit);
+            
+            const checkins = await db.prepare(query).bind(...params).all();
+            activities.push(...(checkins.results || []));
+          }
+          
+          if (!typeFilter || typeFilter === 'completion') {
+            let query = `SELECT id, user_id, text, completed_at as created_at, 'completion' as activity_type FROM tasks WHERE status = 'done' AND completed_at IS NOT NULL`;
+            const params: any[] = [];
+            if (userFilter) {
+              query += ' AND user_id = ?';
+              params.push(userFilter);
+            }
+            query += ' ORDER BY completed_at DESC LIMIT ?';
+            params.push(limit);
+            
+            const completions = await db.prepare(query).bind(...params).all();
+            activities.push(...(completions.results || []));
+          }
+          
+          if (!typeFilter || typeFilter === 'message') {
+            let query = `SELECT *, 'message' as activity_type FROM messages`;
+            const params: any[] = [];
+            if (userFilter) {
+              query += ' WHERE from_user = ? OR to_user = ?';
+              params.push(userFilter, userFilter);
+            }
+            query += ' ORDER BY created_at DESC LIMIT ?';
+            params.push(limit);
+            
+            const messages = await db.prepare(query).bind(...params).all();
+            activities.push(...(messages.results || []));
+          }
+          
+          activities.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+          
+          return jsonResponse({ activities: activities.slice(0, limit) });
+        }
+
+        // ==================== CHECKINS ====================
+        
         if (path === '/checkins' && method === 'GET') {
           const limit = parseInt(url.searchParams.get('limit') || '20');
           const userFilter = url.searchParams.get('user');
@@ -349,7 +906,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ checkins: checkins.results || [] });
         }
 
-        // GET single checkin with comments
         const checkinMatch = path.match(/^\/checkins\/([^/]+)$/);
         if (checkinMatch && method === 'GET') {
           const checkinId = checkinMatch[1];
@@ -369,7 +925,23 @@ export function createApiRoutes(env: Env) {
           });
         }
 
-        // POST comment on checkin
+        if (path === '/checkins' && method === 'POST') {
+          const body = await request.json() as any;
+          const { thread_summary, full_recap, project_name } = body;
+          
+          if (!thread_summary || !full_recap) {
+            return jsonResponse({ error: 'thread_summary and full_recap required' }, 400);
+          }
+          
+          const id = crypto.randomUUID();
+          await db.prepare(`
+            INSERT INTO check_ins (id, user_id, thread_summary, full_recap, project_name, created_at)
+            VALUES (?, ?, ?, ?, ?, datetime('now'))
+          `).bind(id, userId, thread_summary, full_recap, project_name || null).run();
+          
+          return jsonResponse({ success: true, id, message: 'Check-in created' });
+        }
+
         const checkinCommentMatch = path.match(/^\/checkins\/([^/]+)\/comments$/);
         if (checkinCommentMatch && method === 'POST') {
           const checkinId = checkinCommentMatch[1];
@@ -387,9 +959,449 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ success: true, id, message: 'Comment added' });
         }
 
+        // ==================== MESSAGES ====================
+        
+        if (path === '/messages' && method === 'GET') {
+          await db.prepare("DELETE FROM messages WHERE expires_at < datetime('now')").run();
+          
+          const includeRead = url.searchParams.get('include_read') === 'true';
+          let query = `SELECT * FROM messages WHERE to_user = ?`;
+          if (!includeRead) {
+            query += ` AND read_at IS NULL`;
+          }
+          query += ` ORDER BY created_at DESC`;
+          
+          const messages = await db.prepare(query).bind(userId).all();
+          
+          return jsonResponse({ 
+            messages: messages.results || [],
+            count: messages.results?.length || 0
+          });
+        }
+
+        if (path === '/messages/unread-count' && method === 'GET') {
+          const result = await db.prepare(
+            `SELECT COUNT(*) as count FROM messages WHERE to_user = ? AND read_at IS NULL`
+          ).bind(userId).first() as any;
+          
+          return jsonResponse({ count: result?.count || 0 });
+        }
+
+        if (path === '/messages' && method === 'POST') {
+          const body = await request.json() as any;
+          const { to, message } = body;
+          
+          if (!to || !message?.trim()) {
+            return jsonResponse({ error: 'to and message required' }, 400);
+          }
+          
+          const id = crypto.randomUUID();
+          const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+          
+          await db.prepare(`
+            INSERT INTO messages (id, from_user, to_user, content, created_at, expires_at)
+            VALUES (?, ?, ?, ?, datetime('now'), ?)
+          `).bind(id, userId, to, message.trim(), expiresAt).run();
+          
+          return jsonResponse({ success: true, id, message: 'Message sent' });
+        }
+
+        const readMessageMatch = path.match(/^\/messages\/([^/]+)\/read$/);
+        if (readMessageMatch && method === 'POST') {
+          const messageId = readMessageMatch[1];
+          await db.prepare(`
+            UPDATE messages SET read_at = datetime('now') WHERE id = ? AND to_user = ?
+          `).bind(messageId, userId).run();
+          return jsonResponse({ success: true, message: 'Message marked as read' });
+        }
+
+        if (path === '/messages/read' && method === 'POST') {
+          await db.prepare(`
+            UPDATE messages SET read_at = datetime('now') WHERE to_user = ? AND read_at IS NULL
+          `).bind(userId).run();
+          return jsonResponse({ success: true, message: 'Messages marked as read' });
+        }
+
+        if (path === '/messages/read-all' && method === 'POST') {
+          await db.prepare(`
+            UPDATE messages SET read_at = datetime('now') WHERE to_user = ? AND read_at IS NULL
+          `).bind(userId).run();
+          return jsonResponse({ success: true, message: 'All messages marked as read' });
+        }
+
+        // ==================== TEAM ====================
+        
+        if (path === '/team/summary' && method === 'GET') {
+          const team = env.TEAM || 'micaiah,irene';
+          const teammates = team.split(',').map(t => t.trim()).filter(t => t !== userId);
+          
+          const summary: any = { teammates: [] };
+          
+          for (const teammate of teammates) {
+            const recentCheckin = await db.prepare(`
+              SELECT * FROM check_ins WHERE user_id = ? ORDER BY created_at DESC LIMIT 1
+            `).bind(teammate).first();
+            
+            const taskCount = await db.prepare(`
+              SELECT COUNT(*) as count FROM tasks WHERE user_id = ? AND status = 'open' AND (is_active = 1 OR objective_id IS NOT NULL)
+            `).bind(teammate).first() as any;
+            
+            summary.teammates.push({
+              id: teammate,
+              name: teammate.charAt(0).toUpperCase() + teammate.slice(1),
+              active_tasks: taskCount?.count || 0,
+              last_checkin: recentCheckin || null
+            });
+          }
+          
+          return jsonResponse(summary);
+        }
+
+        // ==================== HANDOFF SYSTEM ====================
+        
+        if (path === '/handoff/queue' && method === 'GET') {
+          const status = url.searchParams.get('status');
+          const project = url.searchParams.get('project');
+          const priority = url.searchParams.get('priority');
+          const limit = parseInt(url.searchParams.get('limit') || '20');
+          
+          let query = 'SELECT * FROM handoff_queue WHERE 1=1';
+          const params: any[] = [];
+          
+          if (status) {
+            query += ' AND status = ?';
+            params.push(status);
+          }
+          if (project) {
+            query += ' AND project_name = ?';
+            params.push(project);
+          }
+          if (priority) {
+            query += ' AND priority = ?';
+            params.push(priority);
+          }
+          
+          query += ' ORDER BY CASE priority WHEN "urgent" THEN 1 WHEN "high" THEN 2 WHEN "normal" THEN 3 WHEN "low" THEN 4 END, created_at ASC LIMIT ?';
+          params.push(limit);
+          
+          try {
+            const tasks = await db.prepare(query).bind(...params).all();
+            return jsonResponse({ tasks: tasks.results || [] });
+          } catch (e) {
+            return jsonResponse({ tasks: [], error: 'Handoff table may not exist' });
+          }
+        }
+
+        const handoffGetMatch = path.match(/^\/handoff\/tasks\/([^/]+)$/);
+        if (handoffGetMatch && method === 'GET') {
+          const taskId = handoffGetMatch[1];
+          try {
+            const task = await db.prepare('SELECT * FROM handoff_queue WHERE id = ?').bind(taskId).first();
+            if (!task) return jsonResponse({ error: 'Task not found' }, 404);
+            return jsonResponse({ task });
+          } catch (e) {
+            return jsonResponse({ error: 'Handoff table may not exist' }, 500);
+          }
+        }
+
+        const handoffClaimMatch = path.match(/^\/handoff\/tasks\/([^/]+)\/claim$/);
+        if (handoffClaimMatch && method === 'POST') {
+          const taskId = handoffClaimMatch[1];
+          try {
+            await db.prepare(`
+              UPDATE handoff_queue SET status = 'claimed', claimed_by = ?, claimed_at = datetime('now')
+              WHERE id = ? AND status = 'pending'
+            `).bind(userId, taskId).run();
+            return jsonResponse({ success: true, message: 'Task claimed' });
+          } catch (e) {
+            return jsonResponse({ error: 'Failed to claim task' }, 500);
+          }
+        }
+
+        const handoffProjectMatch = path.match(/^\/handoff\/projects\/([^/]+)$/);
+        if (handoffProjectMatch && method === 'GET') {
+          const project = decodeURIComponent(handoffProjectMatch[1]);
+          try {
+            const stats = await db.prepare(`
+              SELECT status, COUNT(*) as count FROM handoff_queue 
+              WHERE project_name = ? GROUP BY status
+            `).bind(project).all();
+            
+            const statusCounts: Record<string, number> = {};
+            for (const row of (stats.results || []) as any[]) {
+              statusCounts[row.status] = row.count;
+            }
+            
+            const total = Object.values(statusCounts).reduce((a, b) => a + b, 0);
+            const complete = statusCounts['complete'] || 0;
+            const progress = total > 0 ? Math.round((complete / total) * 100) : 0;
+            
+            return jsonResponse({
+              project_name: project,
+              pending: statusCounts['pending'] || 0,
+              claimed: statusCounts['claimed'] || 0,
+              in_progress: statusCounts['in_progress'] || 0,
+              complete: complete,
+              blocked: statusCounts['blocked'] || 0,
+              total,
+              progress
+            });
+          } catch (e) {
+            return jsonResponse({ error: 'Failed to get project status' }, 500);
+          }
+        }
+
+        // ==================== CONNECTIONS ====================
+        
+        if (path === '/connections/status' && method === 'GET') {
+          const services = [
+            'google_drive', 'gmail_personal', 'gmail_company', 
+            'blogger_personal', 'blogger_company',
+            'google_contacts_personal', 'google_contacts_company',
+            'google_analytics', 'github'
+          ];
+          
+          const status: Record<string, boolean> = {};
+          
+          for (const service of services) {
+            const token = await db.prepare(
+              'SELECT id FROM oauth_tokens WHERE user_id = ? AND provider = ?'
+            ).bind(userId, service).first();
+            status[service] = !!token;
+          }
+          
+          return jsonResponse({ connected: status });
+        }
+
+        // ==================== JOURNAL ====================
+        
+        if (path === '/journal' && method === 'GET') {
+          const days = parseInt(url.searchParams.get('days') || '7');
+          const entryType = url.searchParams.get('entry_type');
+          const mood = url.searchParams.get('mood');
+          
+          let query = `SELECT * FROM journal_entries WHERE user_id = ? AND created_at >= datetime('now', '-${days} days')`;
+          const params: any[] = [userId];
+          
+          if (entryType) {
+            query += ' AND entry_type = ?';
+            params.push(entryType);
+          }
+          if (mood) {
+            query += ' AND mood = ?';
+            params.push(mood);
+          }
+          
+          query += ' ORDER BY created_at DESC';
+          
+          const entries = await db.prepare(query).bind(...params).all();
+          return jsonResponse({ entries: entries.results || [] });
+        }
+
+        if (path === '/journal' && method === 'POST') {
+          const body = await request.json() as any;
+          const { content, mood, energy, entry_type } = body;
+          
+          if (!content?.trim()) {
+            return jsonResponse({ error: 'content required' }, 400);
+          }
+          
+          const id = crypto.randomUUID();
+          const now = new Date().toISOString();
+          const entryDate = now.split('T')[0];
+          
+          await db.prepare(`
+            INSERT INTO journal_entries (id, user_id, entry_date, entry_type, content, mood, energy_level, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `).bind(id, userId, entryDate, entry_type || 'freeform', content.trim(), mood || null, energy || null, now, now).run();
+          
+          return jsonResponse({ success: true, id, message: 'Journal entry created' });
+        }
+
+        if (path === '/journal/streak' && method === 'GET') {
+          const entries = await db.prepare(`
+            SELECT DISTINCT date(created_at) as entry_date FROM journal_entries 
+            WHERE user_id = ? ORDER BY entry_date DESC LIMIT 30
+          `).bind(userId).all();
+          
+          let streak = 0;
+          const today = new Date().toISOString().split('T')[0];
+          let checkDate = new Date(today);
+          
+          for (const entry of (entries.results || []) as any[]) {
+            const entryDate = entry.entry_date;
+            const expectedDate = checkDate.toISOString().split('T')[0];
+            
+            if (entryDate === expectedDate) {
+              streak++;
+              checkDate.setDate(checkDate.getDate() - 1);
+            } else if (entryDate < expectedDate) {
+              break;
+            }
+          }
+          
+          return jsonResponse({ streak, last_entry: (entries.results?.[0] as any)?.entry_date || null });
+        }
+
+        // ==================== WORK SESSIONS ====================
+        
+        if (path === '/work-sessions/current' && method === 'GET') {
+          const today = new Date().toISOString().split('T')[0];
+          const session = await db.prepare(`
+            SELECT * FROM work_sessions WHERE user_id = ? AND session_date = ? ORDER BY created_at DESC LIMIT 1
+          `).bind(userId, today).first();
+          
+          return jsonResponse({ session: session || null });
+        }
+
+        // ==================== MORNING BRIEFING ====================
+        
+        if (path === '/morning' && method === 'GET') {
+          const now = new Date();
+          const today = now.toISOString().split('T')[0];
+          const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
+          const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+          const allTasks = await db.prepare(`
+            SELECT t.id, t.text, t.priority, t.due_date, t.category, t.project, 
+                   t.is_active, t.objective_id, t.assigned_by,
+                   o.statement as objective_statement
+            FROM tasks t
+            LEFT JOIN objectives o ON t.objective_id = o.id
+            WHERE t.user_id = ? AND t.status = 'open'
+            AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?)
+            ORDER BY t.priority DESC, t.due_date ASC NULLS LAST, t.created_at ASC
+          `).bind(userId, today).all();
+
+          const overdueTasks = await db.prepare(`
+            SELECT id, text, priority, due_date, category FROM tasks 
+            WHERE user_id = ? AND status = 'open' AND due_date < date('now')
+            ORDER BY due_date ASC
+          `).bind(userId).all();
+
+          let sprintData = null;
+          try {
+            const sprint = await db.prepare(`SELECT * FROM sprints WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`).bind(userId).first();
+            if (sprint) {
+              const objectives = await db.prepare(`SELECT * FROM objectives WHERE sprint_id = ? ORDER BY sort_order ASC`).bind(sprint.id).all();
+              const endDate = new Date(sprint.end_date as string);
+              const daysRemaining = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+              
+              let workDays = 0;
+              const tempDate = new Date(now);
+              while (tempDate <= endDate) {
+                const dow = tempDate.getDay();
+                if (dow !== 0 && dow !== 6) workDays++;
+                tempDate.setDate(tempDate.getDate() + 1);
+              }
+
+              const objectivesWithProgress = [];
+              for (const obj of (objectives.results || []) as any[]) {
+                const openCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'open'").bind(obj.id, userId).first();
+                const doneCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'done'").bind(obj.id, userId).first();
+                objectivesWithProgress.push({
+                  id: obj.id,
+                  statement: obj.statement,
+                  openTasks: openCount?.c || 0,
+                  doneTasks: doneCount?.c || 0,
+                  totalTasks: (openCount?.c || 0) + (doneCount?.c || 0)
+                });
+              }
+
+              sprintData = {
+                id: sprint.id,
+                name: sprint.name,
+                endDate: sprint.end_date,
+                daysRemaining,
+                workDaysRemaining: workDays,
+                objectives: objectivesWithProgress
+              };
+            }
+          } catch (e) { console.error('Sprint fetch error:', e); }
+
+          let incomingTasks: any[] = [];
+          try {
+            const assigned = await db.prepare(`
+              SELECT id, text, priority, due_date, category, assigned_by, created_at 
+              FROM tasks 
+              WHERE user_id = ? AND status = 'open' AND assigned_by IS NOT NULL
+              ORDER BY created_at DESC
+            `).bind(userId).all();
+            incomingTasks = assigned.results || [];
+          } catch (e) { console.error('Incoming tasks fetch error:', e); }
+
+          let incomingHandoffs: any[] = [];
+          try {
+            const handoffs = await db.prepare(`SELECT h.*, t.text as task_text FROM handoff_suggestions h JOIN tasks t ON h.task_id = t.id WHERE h.to_user = ? AND h.status = 'pending'`).bind(userId).all();
+            incomingHandoffs = handoffs.results || [];
+          } catch (e) { console.error('Handoff fetch error:', e); }
+
+          let unreadMessages = 0;
+          try {
+            const msgCount = await db.prepare(`SELECT COUNT(*) as count FROM messages WHERE to_user = ? AND read_at IS NULL`).bind(userId).first();
+            unreadMessages = msgCount?.count || 0;
+          } catch (e) { console.error('Message count error:', e); }
+
+          let launches: any[] = [];
+          try {
+            const launchResults = await db.prepare(`
+              SELECT lp.*, 
+                (SELECT COUNT(*) FROM launch_checklist WHERE project_id = lp.id AND completed = 1) as done_count,
+                (SELECT COUNT(*) FROM launch_checklist WHERE project_id = lp.id) as total_count
+              FROM launch_projects lp WHERE lp.user_id = ? AND lp.status != 'complete' ORDER BY lp.created_at DESC
+            `).bind(userId).all();
+            
+            launches = (launchResults.results || []).map((l: any) => ({
+              id: l.id, title: l.title, phase: l.current_phase,
+              completed: l.done_count || 0, total: l.total_count || 0,
+              progress: l.total_count > 0 ? Math.round((l.done_count / l.total_count) * 100) : 0,
+              targetDate: l.target_launch_date
+            }));
+          } catch (e) { console.error('Launch fetch error:', e); }
+
+          const activeTasks: any[] = [];
+          const sprintTasks: any[] = [];
+          const backlog: any[] = [];
+
+          for (const t of (allTasks.results || []) as any[]) {
+            if (t.is_active) { activeTasks.push(t); continue; }
+            if (t.objective_id) { sprintTasks.push(t); continue; }
+            if (t.assigned_by) { continue; }
+            backlog.push(t);
+          }
+
+          const backlogByCategory: Record<string, any[]> = {};
+          for (const task of backlog) {
+            const cat = task.category || task.project || 'General';
+            if (!backlogByCategory[cat]) backlogByCategory[cat] = [];
+            backlogByCategory[cat].push(task);
+          }
+
+          return jsonResponse({
+            greeting: { dayOfWeek, date: dateStr, time: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) },
+            whereYouLeftOff: null,
+            activeTasks,
+            sprintTasks,
+            overdueTasks: overdueTasks.results || [],
+            todayTasks: [],
+            sprint: sprintData,
+            incoming: incomingTasks,
+            incomingHandoffs,
+            incomingCount: incomingTasks.length + incomingHandoffs.length,
+            unreadMessages,
+            launches,
+            backlogByCategory,
+            stats: {
+              totalTasks: (allTasks.results?.length || 0),
+              activeTasks: activeTasks.length,
+              sprintTasks: sprintTasks.length,
+              overdue: overdueTasks.results?.length || 0
+            }
+          });
+        }
+
         // ==================== EMAIL API (for Bethany) ====================
         
-        // Check inbox
         if (path === '/email/inbox' && method === 'GET') {
           if (!checkBethanyAuth(request)) {
             return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -419,7 +1431,6 @@ export function createApiRoutes(env: Env) {
             return jsonResponse({ messages: [], count: 0 });
           }
           
-          // Fetch details for each message
           const messages: any[] = [];
           for (const msg of data.messages.slice(0, maxResults)) {
             const msgResp = await fetch(`${GMAIL_API_URL}/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date`, {
@@ -442,7 +1453,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ messages, count: messages.length, account });
         }
 
-        // Read specific email
         if (path === '/email/read' && method === 'GET') {
           if (!checkBethanyAuth(request)) {
             return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -473,7 +1483,6 @@ export function createApiRoutes(env: Env) {
           const data: any = await resp.json();
           const headers = data.payload?.headers || [];
           
-          // Extract body
           let body = '';
           if (data.payload?.body?.data) {
             body = atob(data.payload.body.data.replace(/-/g, '+').replace(/_/g, '/'));
@@ -495,7 +1504,6 @@ export function createApiRoutes(env: Env) {
           });
         }
 
-        // Send email
         if (path === '/email/send' && method === 'POST') {
           if (!checkBethanyAuth(request)) {
             return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -515,7 +1523,6 @@ export function createApiRoutes(env: Env) {
             return jsonResponse({ error: `${account || 'personal'} email not connected`, needs_auth: true }, 401);
           }
           
-          // Build the email
           const email = [
             `To: ${to}`,
             `Subject: ${subject}`,
@@ -524,7 +1531,6 @@ export function createApiRoutes(env: Env) {
             emailBody
           ].join('\r\n');
           
-          // Base64 encode
           const encodedEmail = btoa(email).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
           
           const resp = await fetch(`${GMAIL_API_URL}/users/me/messages/send`, {
@@ -545,7 +1551,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ success: true, message_id: result.id, sent_to: to });
         }
 
-        // Search email
         if (path === '/email/search' && method === 'GET') {
           if (!checkBethanyAuth(request)) {
             return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -604,11 +1609,9 @@ export function createApiRoutes(env: Env) {
 
         // ==================== GITHUB WEBHOOK ====================
         
-        // GITHUB WEBHOOK - receives workflow_run events
         if (path === '/github-webhook' && method === 'POST') {
           const event = request.headers.get('X-GitHub-Event');
           
-          // Only process workflow_run events
           if (event !== 'workflow_run') {
             return jsonResponse({ message: 'Event ignored', event });
           }
@@ -617,7 +1620,6 @@ export function createApiRoutes(env: Env) {
             const payload = await request.json() as any;
             const { action, workflow_run, repository } = payload;
             
-            // We care about 'completed' and 'requested' actions
             if (!['completed', 'requested', 'in_progress'].includes(action)) {
               return jsonResponse({ message: 'Action ignored', action });
             }
@@ -671,9 +1673,8 @@ export function createApiRoutes(env: Env) {
           }
         }
 
-        // ==================== DEPLOYS API ====================
+        // ==================== DEPLOYS ====================
         
-        // GET recent deploys
         if (path === '/deploys' && method === 'GET') {
           const repo = url.searchParams.get('repo');
           const limit = parseInt(url.searchParams.get('limit') || '10');
@@ -692,12 +1693,10 @@ export function createApiRoutes(env: Env) {
             const deploys = await db.prepare(query).bind(...params).all();
             return jsonResponse({ deploys: deploys.results || [] });
           } catch (e) {
-            // Table might not exist yet
-            return jsonResponse({ deploys: [], error: 'Table not initialized - run migration' });
+            return jsonResponse({ deploys: [], error: 'Table not initialized' });
           }
         }
 
-        // GET latest deploy for a repo
         if (path === '/deploys/latest' && method === 'GET') {
           const repo = url.searchParams.get('repo');
           if (!repo) return jsonResponse({ error: 'repo parameter required' }, 400);
@@ -709,203 +1708,20 @@ export function createApiRoutes(env: Env) {
             
             return jsonResponse({ deploy: deploy || null });
           } catch (e) {
-            return jsonResponse({ deploy: null, error: 'Table not initialized - run migration' });
+            return jsonResponse({ deploy: null, error: 'Table not initialized' });
           }
-        }
-
-        // MORNING BRIEFING
-        if (path === '/morning' && method === 'GET') {
-          const now = new Date();
-          const today = now.toISOString().split('T')[0];
-          const dayOfWeek = now.toLocaleDateString('en-US', { weekday: 'long' });
-          const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-
-          const allTasks = await db.prepare(`
-            SELECT t.id, t.text, t.priority, t.due_date, t.category, t.project, 
-                   t.is_active, t.objective_id, t.assigned_by,
-                   o.statement as objective_statement
-            FROM tasks t
-            LEFT JOIN objectives o ON t.objective_id = o.id
-            WHERE t.user_id = ? AND t.status = 'open'
-            AND (t.snoozed_until IS NULL OR t.snoozed_until <= ?)
-            ORDER BY t.priority DESC, t.due_date ASC NULLS LAST, t.created_at ASC
-          `).bind(userId, today).all();
-
-          const overdueTasks = await db.prepare(`
-            SELECT id, text, priority, due_date, category FROM tasks 
-            WHERE user_id = ? AND status = 'open' AND due_date < date('now')
-            ORDER BY due_date ASC
-          `).bind(userId).all();
-
-          // Get current sprint
-          let sprintData = null;
-          try {
-            const sprint = await db.prepare(`SELECT * FROM sprints WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`).bind(userId).first();
-            if (sprint) {
-              const objectives = await db.prepare(`SELECT * FROM objectives WHERE sprint_id = ? ORDER BY sort_order ASC`).bind(sprint.id).all();
-              const endDate = new Date(sprint.end_date as string);
-              const daysRemaining = Math.ceil((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-              
-              let workDays = 0;
-              const tempDate = new Date(now);
-              while (tempDate <= endDate) {
-                const dow = tempDate.getDay();
-                if (dow !== 0 && dow !== 6) workDays++;
-                tempDate.setDate(tempDate.getDate() + 1);
-              }
-
-              const objectivesWithProgress = [];
-              for (const obj of (objectives.results || []) as any[]) {
-                // FIX: Added user_id filter to correctly count tasks per user
-                const openCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'open'").bind(obj.id, userId).first();
-                const doneCount = await db.prepare("SELECT COUNT(*) as c FROM tasks WHERE objective_id = ? AND user_id = ? AND status = 'done'").bind(obj.id, userId).first();
-                objectivesWithProgress.push({
-                  id: obj.id,
-                  statement: obj.statement,
-                  openTasks: openCount?.c || 0,
-                  doneTasks: doneCount?.c || 0,
-                  totalTasks: (openCount?.c || 0) + (doneCount?.c || 0)
-                });
-              }
-
-              sprintData = {
-                id: sprint.id,
-                name: sprint.name,
-                endDate: sprint.end_date,
-                daysRemaining,
-                workDaysRemaining: workDays,
-                objectives: objectivesWithProgress
-              };
-            }
-          } catch (e) { console.error('Sprint fetch error:', e); }
-
-          // Get incoming tasks (assigned by teammate) - tasks with assigned_by set
-          let incomingTasks: any[] = [];
-          try {
-            const assigned = await db.prepare(`
-              SELECT id, text, priority, due_date, category, assigned_by, created_at 
-              FROM tasks 
-              WHERE user_id = ? AND status = 'open' AND assigned_by IS NOT NULL
-              ORDER BY created_at DESC
-            `).bind(userId).all();
-            incomingTasks = assigned.results || [];
-          } catch (e) { console.error('Incoming tasks fetch error:', e); }
-
-          // Get incoming handoffs (legacy - from handoff_suggestions table)
-          let incomingHandoffs: any[] = [];
-          try {
-            const handoffs = await db.prepare(`SELECT h.*, t.text as task_text FROM handoff_suggestions h JOIN tasks t ON h.task_id = t.id WHERE h.to_user = ? AND h.status = 'pending'`).bind(userId).all();
-            incomingHandoffs = handoffs.results || [];
-          } catch (e) { console.error('Handoff fetch error:', e); }
-
-          // Get unread messages count
-          let unreadMessages = 0;
-          try {
-            const msgCount = await db.prepare(`SELECT COUNT(*) as count FROM messages WHERE to_user = ? AND read_at IS NULL`).bind(userId).first();
-            unreadMessages = msgCount?.count || 0;
-          } catch (e) { console.error('Message count error:', e); }
-
-          // Get launches
-          let launches: any[] = [];
-          try {
-            const launchResults = await db.prepare(`
-              SELECT lp.*, 
-                (SELECT COUNT(*) FROM launch_checklist WHERE project_id = lp.id AND completed = 1) as done_count,
-                (SELECT COUNT(*) FROM launch_checklist WHERE project_id = lp.id) as total_count
-              FROM launch_projects lp WHERE lp.user_id = ? AND lp.status != 'complete' ORDER BY lp.created_at DESC
-            `).bind(userId).all();
-            
-            launches = (launchResults.results || []).map((l: any) => ({
-              id: l.id, title: l.title, phase: l.current_phase,
-              completed: l.done_count || 0, total: l.total_count || 0,
-              progress: l.total_count > 0 ? Math.round((l.done_count / l.total_count) * 100) : 0,
-              targetDate: l.target_launch_date
-            }));
-          } catch (e) { console.error('Launch fetch error:', e); }
-
-          // Task categorization
-          const activeTasks: any[] = [];
-          const sprintTasks: any[] = [];
-          const backlog: any[] = [];
-
-          for (const t of (allTasks.results || []) as any[]) {
-            if (t.is_active) { activeTasks.push(t); continue; }
-            if (t.objective_id) { sprintTasks.push(t); continue; }
-            if (t.assigned_by) { continue; } // Skip incoming tasks from backlog
-            backlog.push(t);
-          }
-
-          const backlogByCategory: Record<string, any[]> = {};
-          for (const task of backlog) {
-            const cat = task.category || task.project || 'General';
-            if (!backlogByCategory[cat]) backlogByCategory[cat] = [];
-            backlogByCategory[cat].push(task);
-          }
-
-          return jsonResponse({
-            greeting: { dayOfWeek, date: dateStr, time: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) },
-            whereYouLeftOff: null,
-            activeTasks,
-            sprintTasks,
-            overdueTasks: overdueTasks.results || [],
-            todayTasks: [],
-            sprint: sprintData,
-            incoming: incomingTasks,        // Tasks assigned via add_task --for_user
-            incomingHandoffs,               // Legacy handoff_suggestions
-            incomingCount: incomingTasks.length + incomingHandoffs.length,
-            unreadMessages,
-            launches,
-            backlogByCategory,
-            stats: {
-              totalTasks: (allTasks.results?.length || 0),
-              activeTasks: activeTasks.length,
-              sprintTasks: sprintTasks.length,
-              overdue: overdueTasks.results?.length || 0
-            }
-          });
-        }
-
-        // MESSAGES - Get unread
-        if (path === '/messages' && method === 'GET') {
-          // Clean up expired messages
-          await db.prepare("DELETE FROM messages WHERE expires_at < datetime('now')").run();
-          
-          const messages = await db.prepare(`
-            SELECT * FROM messages 
-            WHERE to_user = ? AND read_at IS NULL 
-            ORDER BY created_at DESC
-          `).bind(userId).all();
-          
-          return jsonResponse({ 
-            messages: messages.results || [],
-            count: messages.results?.length || 0
-          });
-        }
-
-        // MESSAGES - Mark as read
-        if (path === '/messages/read' && method === 'POST') {
-          await db.prepare(`
-            UPDATE messages SET read_at = datetime('now') 
-            WHERE to_user = ? AND read_at IS NULL
-          `).bind(userId).run();
-          
-          return jsonResponse({ success: true, message: 'Messages marked as read' });
         }
 
         // ==================== SCRATCHPAD ====================
         
-        // GET scratchpad items
         if (path === '/scratchpad' && method === 'GET') {
           const items = await db.prepare(`
-            SELECT * FROM scratchpad 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC
+            SELECT * FROM scratchpad WHERE user_id = ? ORDER BY created_at DESC
           `).bind(userId).all();
           
           return jsonResponse({ items: items.results || [] });
         }
 
-        // POST to scratchpad
         if (path === '/scratchpad' && method === 'POST') {
           const body = await request.json() as any;
           const { text } = body;
@@ -913,19 +1729,17 @@ export function createApiRoutes(env: Env) {
           
           const id = crypto.randomUUID();
           await db.prepare(`
-            INSERT INTO scratchpad (id, user_id, text, created_at) 
-            VALUES (?, ?, ?, datetime('now'))
+            INSERT INTO scratchpad (id, user_id, text, created_at) VALUES (?, ?, ?, datetime('now'))
           `).bind(id, userId, text.trim()).run();
           
           return jsonResponse({ success: true, id });
         }
 
-        // Process scratchpad item
         const scratchProcessMatch = path.match(/^\/scratchpad\/([^/]+)\/process$/);
         if (scratchProcessMatch && method === 'POST') {
           const itemId = scratchProcessMatch[1];
           const body = await request.json() as any;
-          const { action } = body; // 'activate', 'task', or 'delete'
+          const { action } = body;
           
           const item = await db.prepare('SELECT * FROM scratchpad WHERE id = ? AND user_id = ?').bind(itemId, userId).first();
           if (!item) return jsonResponse({ error: 'Item not found' }, 404);
@@ -935,14 +1749,12 @@ export function createApiRoutes(env: Env) {
             return jsonResponse({ success: true, message: 'Deleted' });
           }
           
-          // Create task from scratchpad item
           const taskId = crypto.randomUUID();
           await db.prepare(`
             INSERT INTO tasks (id, user_id, text, category, priority, status, is_active, created_at, last_touched) 
             VALUES (?, ?, ?, 'General', 3, 'open', ?, datetime('now'), datetime('now'))
           `).bind(taskId, userId, item.text, action === 'activate' ? 1 : 0).run();
           
-          // Delete from scratchpad
           await db.prepare('DELETE FROM scratchpad WHERE id = ?').bind(itemId).run();
           
           return jsonResponse({ success: true, taskId, message: action === 'activate' ? 'Task activated' : 'Task created' });
@@ -950,18 +1762,14 @@ export function createApiRoutes(env: Env) {
 
         // ==================== NOTES ====================
         
-        // GET notes
         if (path === '/notes' && method === 'GET') {
           const notes = await db.prepare(`
-            SELECT * FROM notes 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC
+            SELECT * FROM notes WHERE user_id = ? ORDER BY created_at DESC
           `).bind(userId).all();
           
           return jsonResponse({ notes: notes.results || [] });
         }
 
-        // POST note
         if (path === '/notes' && method === 'POST') {
           const body = await request.json() as any;
           const { title, content, category } = body;
@@ -976,7 +1784,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ success: true, id });
         }
 
-        // DELETE note
         const noteDeleteMatch = path.match(/^\/notes\/([^/]+)$/);
         if (noteDeleteMatch && method === 'DELETE') {
           const noteId = noteDeleteMatch[1];
@@ -986,7 +1793,6 @@ export function createApiRoutes(env: Env) {
 
         // ==================== ORPHANS ====================
         
-        // GET orphans (tasks without category, project, objective, not active)
         if (path === '/orphans' && method === 'GET') {
           const orphans = await db.prepare(`
             SELECT * FROM tasks 
@@ -1004,78 +1810,8 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ tasks: orphans.results || [] });
         }
 
-        // TASKS LIST
-        if (path === '/tasks' && method === 'GET') {
-          const status = url.searchParams.get('status') || 'open';
-          let query = `SELECT * FROM tasks WHERE user_id = ?`;
-          const params: any[] = [userId];
-          if (status !== 'all') { query += ` AND status = ?`; params.push(status); }
-          query += ` ORDER BY priority DESC, created_at ASC`;
-          const tasks = await db.prepare(query).bind(...params).all();
-          return jsonResponse({ tasks: tasks.results || [] });
-        }
-
-        // CREATE TASK
-        if (path === '/tasks' && method === 'POST') {
-          const body = await request.json() as any;
-          const { text, category, priority, dueDate } = body;
-          const id = crypto.randomUUID();
-          await db.prepare(`INSERT INTO tasks (id, user_id, text, category, priority, due_date, status, created_at, last_touched) VALUES (?, ?, ?, ?, ?, ?, 'open', datetime('now'), datetime('now'))`).bind(id, userId, text, category || 'General', priority || 3, dueDate || null).run();
-          return jsonResponse({ success: true, id, message: 'Task created' });
-        }
-
-        // COMPLETE TASK
-        const completeMatch = path.match(/^\/tasks\/([^/]+)\/complete$/);
-        if (completeMatch && method === 'POST') {
-          const taskId = completeMatch[1];
-          const task = await db.prepare('SELECT * FROM tasks WHERE id = ? AND user_id = ?').bind(taskId, userId).first();
-          if (!task) return jsonResponse({ error: 'Task not found' }, 404);
-          const completedAt = new Date().toISOString();
-          await db.prepare(`UPDATE tasks SET status = 'done', completed_at = ?, is_active = 0 WHERE id = ? AND user_id = ?`).bind(completedAt, taskId, userId).run();
-          return jsonResponse({ success: true, message: 'Task completed' });
-        }
-
-        // ACTIVATE TASK
-        const activateMatch = path.match(/^\/tasks\/([^/]+)\/activate$/);
-        if (activateMatch && method === 'POST') {
-          const taskId = activateMatch[1];
-          await db.prepare(`UPDATE tasks SET is_active = 1, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
-          return jsonResponse({ success: true, message: 'Task activated' });
-        }
-
-        // DEACTIVATE TASK
-        const deactivateMatch = path.match(/^\/tasks\/([^/]+)\/deactivate$/);
-        if (deactivateMatch && method === 'POST') {
-          const taskId = deactivateMatch[1];
-          await db.prepare(`UPDATE tasks SET is_active = 0, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
-          return jsonResponse({ success: true, message: 'Task deactivated' });
-        }
-
-        // RESTORE TASK (from completed)
-        const restoreMatch = path.match(/^\/tasks\/([^/]+)\/restore$/);
-        if (restoreMatch && method === 'POST') {
-          const taskId = restoreMatch[1];
-          await db.prepare(`UPDATE tasks SET status = 'open', completed_at = NULL, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
-          return jsonResponse({ success: true, message: 'Task restored' });
-        }
-
-        // CLAIM TASK - Accept an incoming task (clears assigned_by)
-        const claimMatch = path.match(/^\/tasks\/([^/]+)\/claim$/);
-        if (claimMatch && method === 'POST') {
-          const taskId = claimMatch[1];
-          await db.prepare(`UPDATE tasks SET assigned_by = NULL, last_touched = datetime('now') WHERE id = ? AND user_id = ?`).bind(taskId, userId).run();
-          return jsonResponse({ success: true, message: 'Task claimed' });
-        }
-
-        // SPRINT
-        if (path === '/sprint' && method === 'GET') {
-          const sprint = await db.prepare(`SELECT * FROM sprints WHERE user_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1`).bind(userId).first();
-          if (!sprint) return jsonResponse({ sprint: null });
-          const objectives = await db.prepare(`SELECT * FROM objectives WHERE sprint_id = ? ORDER BY sort_order ASC`).bind(sprint.id).all();
-          return jsonResponse({ sprint: { ...sprint, objectives: objectives.results || [] } });
-        }
-
-        // LAUNCHES
+        // ==================== LAUNCHES ====================
+        
         if (path === '/launches' && method === 'GET') {
           const launches = await db.prepare(`
             SELECT lp.*, 
@@ -1094,7 +1830,6 @@ export function createApiRoutes(env: Env) {
           });
         }
 
-        // LAUNCH CHECKLIST
         const checklistMatch = path.match(/^\/launches\/([^/]+)\/checklist$/);
         if (checklistMatch && method === 'GET') {
           const projectId = checklistMatch[1];
@@ -1102,7 +1837,6 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ items: items.results || [] });
         }
 
-        // COMPLETE CHECKLIST ITEM
         const checklistCompleteMatch = path.match(/^\/launches\/([^/]+)\/checklist\/([^/]+)\/complete$/);
         if (checklistCompleteMatch && method === 'POST') {
           const itemId = checklistCompleteMatch[2];
@@ -1110,16 +1844,8 @@ export function createApiRoutes(env: Env) {
           return jsonResponse({ success: true, message: 'Item completed' });
         }
 
-        // JOURNAL
-        if (path === '/journal' && method === 'POST') {
-          const body = await request.json() as any;
-          const { content, mood, energy, entryType } = body;
-          const id = crypto.randomUUID();
-          await db.prepare(`INSERT INTO journal_entries (id, user_id, content, mood, energy, entry_type, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`).bind(id, userId, content, mood || null, energy || null, entryType || 'freeform').run();
-          return jsonResponse({ success: true, id, message: 'Journal entry created' });
-        }
-
-        // IDEAS
+        // ==================== IDEAS ====================
+        
         if (path === '/ideas' && method === 'POST') {
           const body = await request.json() as any;
           const { title, content, category } = body;

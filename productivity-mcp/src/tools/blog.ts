@@ -77,11 +77,8 @@ async function upBlogsRequest(env: any, blogId: string | null, path: string, met
 
 // Helper to get blog API key from env
 function getBlogApiKey(env: any, blogId: string): string | null {
-  // Check for blog-specific key first (format: BLOG_API_KEY_{BLOGID})
   const specificKey = env[`BLOG_API_KEY_${blogId.toUpperCase().replace(/-/g, '_')}`];
   if (specificKey) return specificKey;
-  
-  // Fall back to default key
   return env.UP_BLOGS_API_KEY || null;
 }
 
@@ -95,20 +92,16 @@ export function registerBlogTools(ctx: ToolContext) {
   server.tool("up_blog_list_blogs", {}, async () => {
     try {
       const result: any = await upBlogsRequest(env, null, '/blogs');
-      
       if (!result.blogs?.length) {
         return { content: [{ type: "text", text: "📭 No blogs found" }] };
       }
-      
       let out = `📚 **UP Blogs** (${result.blogs.length})\n\n`;
-      
       for (const blog of result.blogs) {
         out += `• **${blog.name}** (${blog.id})\n`;
         if (blog.siteUrl) out += `  URL: ${blog.siteUrl}\n`;
         if (blog.authorName) out += `  Author: ${blog.authorName}\n`;
         out += `  Posts: ${blog.postCount || 0}\n\n`;
       }
-      
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -119,27 +112,22 @@ export function registerBlogTools(ctx: ToolContext) {
     blog_id: z.string().describe("Blog ID (e.g., 'micaiah-bussey', 'proverbs-library')"),
     status: z.enum(['draft', 'scheduled', 'published']).optional().describe("Filter by status"),
     limit: z.number().optional().default(20).describe("Max posts to return"),
-    fields: z.string().optional().describe("Comma-separated fields to return (e.g., 'id,title,slug,status,excerpt')"),
+    fields: z.string().optional().describe("Comma-separated fields to return"),
   }, async ({ blog_id, status, limit, fields }) => {
     try {
       const apiKey = getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'. Set UP_BLOGS_API_KEY or BLOG_API_KEY_${blog_id.toUpperCase().replace(/-/g, '_')} secret.` }] };
       }
-      
       let path = '/posts?';
       if (status) path += `status=${status}&`;
       if (limit) path += `limit=${limit}&`;
       if (fields) path += `fields=${fields}&`;
-      
       const result: any = await upBlogsRequest(env, blog_id, path, 'GET', null, apiKey);
-      
       if (!result.posts?.length) {
         return { content: [{ type: "text", text: `📭 No${status ? ` ${status}` : ''} posts found in '${blog_id}'` }] };
       }
-      
       let out = `📝 **${blog_id} Posts** (${result.posts.length})\n\n`;
-      
       for (const p of result.posts) {
         const statusIcon = p.status === 'published' ? '✅' : p.status === 'scheduled' ? '⏰' : '📝';
         out += `${statusIcon} **${p.title}**\n`;
@@ -153,7 +141,39 @@ export function registerBlogTools(ctx: ToolContext) {
         if (p.tags?.length) out += `   Tags: ${p.tags.join(', ')}\n`;
         out += `\n`;
       }
-      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  server.tool("up_blog_get_post", {
+    blog_id: z.string().describe("Blog ID (e.g., 'micaiah-bussey', 'proverbs-library')"),
+    slug_or_id: z.string().describe("Post slug or ID"),
+  }, async ({ blog_id, slug_or_id }) => {
+    try {
+      const apiKey = getBlogApiKey(env, blog_id);
+      if (!apiKey) {
+        return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
+      }
+      const result: any = await upBlogsRequest(env, blog_id, `/posts/${slug_or_id}`, 'GET', null, apiKey);
+      const p = result.post;
+      const statusIcon = p.status === 'published' ? '✅' : p.status === 'scheduled' ? '⏰' : '📝';
+      let out = `${statusIcon} **${p.title}**\n\n`;
+      out += `**ID:** ${p.id}\n`;
+      out += `**Slug:** ${p.slug}\n`;
+      out += `**Status:** ${p.status}\n`;
+      out += `**Author:** ${p.author || 'Unknown'}\n`;
+      if (p.author_id) out += `**Author ID:** ${p.author_id}\n`;
+      if (p.tags?.length) out += `**Tags:** ${p.tags.join(', ')}\n`;
+      if (p.excerpt) out += `**Excerpt:** ${p.excerpt}\n`;
+      if (p.image) out += `**Image:** ${p.image}\n`;
+      if (p.meta_description) out += `**Meta Description:** ${p.meta_description}\n`;
+      if (p.published_at) out += `**Published:** ${p.published_at}\n`;
+      if (p.scheduled_for) out += `**Scheduled:** ${p.scheduled_for}\n`;
+      out += `**Created:** ${p.createdAt}\n`;
+      out += `**Updated:** ${p.updatedAt}\n`;
+      out += `\n---\n\n**Content (Markdown):**\n\`\`\`markdown\n${p.content?.slice(0, 2000)}${p.content?.length > 2000 ? '\n...(truncated)' : ''}\n\`\`\``;
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -179,14 +199,7 @@ export function registerBlogTools(ctx: ToolContext) {
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
-      
-      const postData: any = {
-        title,
-        content,
-        status,
-        send_email,
-      };
-      
+      const postData: any = { title, content, status, send_email };
       if (author) postData.author = author;
       if (author_id) postData.author_id = author_id;
       if (image) postData.image = image;
@@ -194,25 +207,19 @@ export function registerBlogTools(ctx: ToolContext) {
       if (meta_description) postData.meta_description = meta_description;
       if (tags?.length) postData.tags = tags;
       if (scheduled_for) postData.scheduled_for = scheduled_for;
-      
       const result: any = await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
-      
       let out = `✅ Post created: **${result.post.title}**\n\n`;
       out += `ID: ${result.post.id}\n`;
       out += `Slug: ${result.post.slug}\n`;
       out += `Status: ${result.post.status}\n`;
-      
       if (result.published) {
         out += `\n🚀 Post was published immediately!`;
-        if (result.email?.sent) {
-          out += `\n📧 Email notification sent`;
-        }
+        if (result.email?.sent) out += `\n📧 Email notification sent`;
       } else if (result.post.status === 'scheduled') {
         out += `\n⏰ Scheduled for: ${result.post.scheduled_for}`;
       } else {
         out += `\n📝 Saved as draft`;
       }
-      
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -238,9 +245,7 @@ export function registerBlogTools(ctx: ToolContext) {
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
-      
       const postData: any = { id: post_id };
-      
       if (title !== undefined) postData.title = title;
       if (content !== undefined) postData.content = content;
       if (author !== undefined) postData.author = author;
@@ -251,16 +256,10 @@ export function registerBlogTools(ctx: ToolContext) {
       if (status !== undefined) postData.status = status;
       if (scheduled_for !== undefined) postData.scheduled_for = scheduled_for;
       if (send_email !== undefined) postData.send_email = send_email;
-      
       const result: any = await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
-      
       let out = `✅ Post updated: **${result.post.title}**\n\n`;
       out += `Status: ${result.post.status}\n`;
-      
-      if (result.published) {
-        out += `\n🚀 Post was published!`;
-      }
-      
+      if (result.published) out += `\n🚀 Post was published!`;
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -276,9 +275,7 @@ export function registerBlogTools(ctx: ToolContext) {
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
-      
       await upBlogsRequest(env, blog_id, `/posts/${post_id}`, 'DELETE', null, apiKey);
-      
       return { content: [{ type: "text", text: `✅ Post deleted` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -295,25 +292,13 @@ export function registerBlogTools(ctx: ToolContext) {
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
-      
-      const postData = {
-        id: post_id,
-        status: 'published',
-        send_email,
-      };
-      
+      const postData = { id: post_id, status: 'published', send_email };
       const result: any = await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
-      
       let out = `✅ Post published: **${result.post.title}**\n\n`;
       out += `Slug: ${result.post.slug}\n`;
       out += `Published at: ${result.post.published_at}\n`;
-      
-      if (result.email?.sent) {
-        out += `\n📧 Email notification sent`;
-      } else if (result.email?.reason === 'send_email_disabled') {
-        out += `\n📧 Email notification skipped (disabled)`;
-      }
-      
+      if (result.email?.sent) out += `\n📧 Email notification sent`;
+      else if (result.email?.reason === 'send_email_disabled') out += `\n📧 Email notification skipped (disabled)`;
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -331,33 +316,15 @@ export function registerBlogTools(ctx: ToolContext) {
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
-      
-      const postData = {
-        id: post_id,
-        scheduled_for,
-        status: 'scheduled',
-        send_email,
-      };
-      
-      const result: any = await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
-      
+      const postData = { id: post_id, scheduled_for, status: 'scheduled', send_email };
+      await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
       const date = new Date(scheduled_for);
-      const formatted = date.toLocaleDateString('en-US', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        timeZoneName: 'short'
-      });
-      
+      const formatted = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
       return { content: [{ type: "text", text: `⏰ Post scheduled for **${formatted}**` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
     }
   });
-
 
   // ========================================
   // MICAIAHBUSSEY.COM BLOG TOOLS (email-bot API)
@@ -369,25 +336,14 @@ export function registerBlogTools(ctx: ToolContext) {
   }, async ({ status, limit }) => {
     try {
       let path = `/api/blog/admin/posts?site=${MB_DEFAULT_SITE}`;
-      if (status && status !== 'all') {
-        path += `&status=${status}`;
-      }
-      if (limit) {
-        path += `&limit=${limit}`;
-      }
-      
+      if (status && status !== 'all') path += `&status=${status}`;
+      if (limit) path += `&limit=${limit}`;
       const result: any = await mbBlogRequest(env, path);
-      
       if (!result.posts?.length) {
         return { content: [{ type: "text", text: "📭 No blog posts found" }] };
       }
-      
       let out = `📝 **MicaiahBussey.com Blog Posts** (${result.posts.length})\n\n`;
-      
-      if (result.counts) {
-        out += `Drafts: ${result.counts.draft || 0} | Scheduled: ${result.counts.scheduled || 0} | Published: ${result.counts.published || 0}\n\n`;
-      }
-      
+      if (result.counts) out += `Drafts: ${result.counts.draft || 0} | Scheduled: ${result.counts.scheduled || 0} | Published: ${result.counts.published || 0}\n\n`;
       for (const p of result.posts) {
         const statusIcon = p.status === 'published' ? '✅' : p.status === 'scheduled' ? '⏰' : '📝';
         out += `${statusIcon} **${p.title}**\n`;
@@ -398,7 +354,6 @@ export function registerBlogTools(ctx: ToolContext) {
         out += `\n   Category: ${p.category || '(none)'}\n`;
         out += `   ID: ${p.id}\n\n`;
       }
-      
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -411,9 +366,7 @@ export function registerBlogTools(ctx: ToolContext) {
     try {
       const result: any = await mbBlogRequest(env, `/api/blog/admin/posts/${post_id}`);
       const p = result.post;
-      
       const statusIcon = p.status === 'published' ? '✅' : p.status === 'scheduled' ? '⏰' : '📝';
-      
       let out = `${statusIcon} **${p.title}**\n\n`;
       out += `**ID:** ${p.id}\n`;
       out += `**Slug:** ${p.slug}\n`;
@@ -427,9 +380,7 @@ export function registerBlogTools(ctx: ToolContext) {
       if (p.scheduled_at) out += `**Scheduled:** ${p.scheduled_at}\n`;
       out += `**Created:** ${p.created_at}\n`;
       out += `**Updated:** ${p.updated_at}\n`;
-      
       out += `\n---\n\n**Content (Markdown):**\n\`\`\`markdown\n${p.content_md?.slice(0, 2000)}${p.content_md?.length > 2000 ? '\n...(truncated)' : ''}\n\`\`\``;
-      
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -441,7 +392,7 @@ export function registerBlogTools(ctx: ToolContext) {
     content_md: z.string().describe("Post content in Markdown"),
     slug: z.string().optional().describe("URL slug (auto-generated from title if not provided)"),
     excerpt: z.string().optional().describe("Short excerpt/summary"),
-    category: z.string().optional().describe("Post category (e.g., 'Craft', 'Process', 'Behind the Scenes')"),
+    category: z.string().optional().describe("Post category"),
     tags: z.array(z.string()).optional().describe("Array of tags"),
     featured_image: z.string().optional().describe("URL of featured image"),
     author: z.string().optional().default("Micaiah Bussey").describe("Author name"),
@@ -449,29 +400,11 @@ export function registerBlogTools(ctx: ToolContext) {
   }, async ({ title, content_md, slug, excerpt, category, tags, featured_image, author, status }) => {
     try {
       const result: any = await mbBlogRequest(env, '/api/blog/admin/posts', 'POST', {
-        title,
-        content_md,
-        slug,
-        excerpt,
-        category,
-        tags,
-        featured_image,
-        author,
-        status,
-        site: MB_DEFAULT_SITE,
+        title, content_md, slug, excerpt, category, tags, featured_image, author, status, site: MB_DEFAULT_SITE,
       });
-      
       let out = `✅ Post created: **${title}**\n\n`;
-      out += `ID: ${result.id}\n`;
-      out += `Slug: ${result.slug}\n`;
-      out += `Status: ${result.status}\n`;
-      
-      if (result.status === 'draft') {
-        out += `\nNext steps:\n`;
-        out += `• Publish now: mb_publish_post\n`;
-        out += `• Schedule: mb_schedule_post`;
-      }
-      
+      out += `ID: ${result.id}\nSlug: ${result.slug}\nStatus: ${result.status}\n`;
+      if (result.status === 'draft') out += `\nNext steps:\n• Publish now: mb_publish_post\n• Schedule: mb_schedule_post`;
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -499,9 +432,7 @@ export function registerBlogTools(ctx: ToolContext) {
       if (tags !== undefined) updates.tags = tags;
       if (featured_image !== undefined) updates.featured_image = featured_image;
       if (author !== undefined) updates.author = author;
-      
       await mbBlogRequest(env, `/api/blog/admin/posts/${post_id}`, 'PUT', updates);
-      
       return { content: [{ type: "text", text: `✅ Post updated` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -524,7 +455,6 @@ export function registerBlogTools(ctx: ToolContext) {
   }, async ({ post_id }) => {
     try {
       const result: any = await mbBlogRequest(env, `/api/blog/admin/posts/${post_id}/publish`, 'POST');
-      
       return { content: [{ type: "text", text: `✅ Post published!\n\nPublished at: ${result.published_at}` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -533,24 +463,12 @@ export function registerBlogTools(ctx: ToolContext) {
 
   server.tool("mb_schedule_post", {
     post_id: z.string().describe("Post ID to schedule"),
-    scheduled_at: z.string().describe("When to publish (ISO 8601 format, e.g., '2026-01-15T09:00:00Z')"),
+    scheduled_at: z.string().describe("When to publish (ISO 8601 format)"),
   }, async ({ post_id, scheduled_at }) => {
     try {
-      const result: any = await mbBlogRequest(env, `/api/blog/admin/posts/${post_id}/schedule`, 'POST', {
-        scheduled_at,
-      });
-      
+      await mbBlogRequest(env, `/api/blog/admin/posts/${post_id}/schedule`, 'POST', { scheduled_at });
       const date = new Date(scheduled_at);
-      const formatted = date.toLocaleDateString('en-US', { 
-        weekday: 'long', 
-        year: 'numeric', 
-        month: 'long', 
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
-        timeZoneName: 'short'
-      });
-      
+      const formatted = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
       return { content: [{ type: "text", text: `⏰ Post scheduled for **${formatted}**` }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };

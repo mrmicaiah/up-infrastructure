@@ -75,11 +75,34 @@ async function upBlogsRequest(env: any, blogId: string | null, path: string, met
   return resp.json();
 }
 
-// Helper to get blog API key from env
-function getBlogApiKey(env: any, blogId: string): string | null {
+// Helper to get blog API key - checks D1 first, then falls back to env vars
+async function getBlogApiKey(env: any, blogId: string): Promise<string | null> {
+  // First, try to get from D1 database
+  try {
+    const result = await env.DB.prepare(
+      'SELECT api_key FROM blog_api_keys WHERE blog_id = ?'
+    ).bind(blogId).first();
+    
+    if (result?.api_key) {
+      return result.api_key;
+    }
+  } catch (e) {
+    // Table might not exist yet or other DB error - fall through to env vars
+    console.log('D1 lookup failed, falling back to env vars:', e);
+  }
+  
+  // Fall back to environment variables
   const specificKey = env[`BLOG_API_KEY_${blogId.toUpperCase().replace(/-/g, '_')}`];
   if (specificKey) return specificKey;
+  
   return env.UP_BLOGS_API_KEY || null;
+}
+
+// Helper to store blog API key in D1
+async function storeBlogApiKey(env: any, blogId: string, apiKey: string): Promise<void> {
+  await env.DB.prepare(
+    'INSERT OR REPLACE INTO blog_api_keys (blog_id, api_key, created_at) VALUES (?, ?, datetime("now"))'
+  ).bind(blogId, apiKey).run();
 }
 
 export function registerBlogTools(ctx: ToolContext) {
@@ -133,17 +156,61 @@ export function registerBlogTools(ctx: ToolContext) {
       
       const result: any = await upBlogsRequest(env, null, '/admin/register', 'POST', payload, adminKey);
       
+      // Automatically store the API key in D1
+      try {
+        await storeBlogApiKey(env, blog_id, result.api_key);
+      } catch (dbError: any) {
+        // If storage fails, still show the key so user can manually save it
+        let out = `✅ **Blog Registered Successfully!**\n\n`;
+        out += `**Blog ID:** ${result.blog_id}\n`;
+        out += `**API Key:** \`${result.api_key}\`\n\n`;
+        out += `⚠️ **WARNING:** Failed to auto-store API key in database: ${dbError.message}\n\n`;
+        out += `Please save this API key manually! You can store it later with:\n`;
+        out += `\`up_blog_set_api_key\` with blog_id="${blog_id}" and api_key="${result.api_key}"`;
+        return { content: [{ type: "text", text: out }] };
+      }
+      
       let out = `✅ **Blog Registered Successfully!**\n\n`;
       out += `**Blog ID:** ${result.blog_id}\n`;
-      out += `**API Key:** \`${result.api_key}\`\n\n`;
-      out += `⚠️ **IMPORTANT:** Save this API key now! It cannot be retrieved later.\n\n`;
-      out += `To use this blog with MCP tools, set the secret:\n`;
-      out += `\`\`\`\n`;
-      out += `npx wrangler secret put BLOG_API_KEY_${blog_id.toUpperCase().replace(/-/g, '_')}\n`;
-      out += `npx wrangler secret put BLOG_API_KEY_${blog_id.toUpperCase().replace(/-/g, '_')} --config wrangler-irene.jsonc\n`;
-      out += `\`\`\`\n`;
-      out += `Or set UP_BLOGS_API_KEY if this is your only/default blog.`;
+      out += `**Site Name:** ${site_name}\n`;
+      out += `**Site URL:** ${site_url}\n\n`;
+      out += `🔑 API key has been automatically stored in the database.\n`;
+      out += `You can now use all \`up_blog_*\` tools with this blog immediately!`;
       
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  // Tool to manually set/update a blog API key
+  server.tool("up_blog_set_api_key", {
+    blog_id: z.string().describe("Blog ID (e.g., 'micaiah-bussey')"),
+    api_key: z.string().describe("API key for this blog"),
+  }, async ({ blog_id, api_key }) => {
+    try {
+      await storeBlogApiKey(env, blog_id, api_key);
+      return { content: [{ type: "text", text: `✅ API key stored for blog '${blog_id}'` }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ Failed to store API key: ${e.message}` }] };
+    }
+  });
+
+  // Tool to list stored blog API keys (without showing the actual keys)
+  server.tool("up_blog_list_api_keys", {}, async () => {
+    try {
+      const result = await env.DB.prepare(
+        'SELECT blog_id, created_at FROM blog_api_keys ORDER BY created_at DESC'
+      ).all();
+      
+      if (!result.results?.length) {
+        return { content: [{ type: "text", text: "📭 No blog API keys stored in database" }] };
+      }
+      
+      let out = `🔑 **Stored Blog API Keys** (${result.results.length})\n\n`;
+      for (const row of result.results) {
+        out += `• **${row.blog_id}** - stored ${row.created_at}\n`;
+      }
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {
       return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
@@ -176,9 +243,9 @@ export function registerBlogTools(ctx: ToolContext) {
     fields: z.string().optional().describe("Comma-separated fields to return"),
   }, async ({ blog_id, status, limit, fields }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
-        return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'. Set UP_BLOGS_API_KEY or BLOG_API_KEY_${blog_id.toUpperCase().replace(/-/g, '_')} secret.` }] };
+        return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'. Use up_blog_set_api_key to store one.` }] };
       }
       let path = '/posts?';
       if (status) path += `status=${status}&`;
@@ -213,7 +280,7 @@ export function registerBlogTools(ctx: ToolContext) {
     slug_or_id: z.string().describe("Post slug or ID"),
   }, async ({ blog_id, slug_or_id }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
@@ -256,7 +323,7 @@ export function registerBlogTools(ctx: ToolContext) {
     send_email: z.boolean().optional().default(true).describe("Send email notification on publish"),
   }, async ({ blog_id, title, content, author, author_id, image, featured_image_alt, meta_description, tags, status, scheduled_for, send_email }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
@@ -302,7 +369,7 @@ export function registerBlogTools(ctx: ToolContext) {
     send_email: z.boolean().optional().describe("Send email on publish"),
   }, async ({ blog_id, post_id, title, content, author, image, featured_image_alt, meta_description, tags, status, scheduled_for, send_email }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
@@ -332,7 +399,7 @@ export function registerBlogTools(ctx: ToolContext) {
     post_id: z.string().describe("Post ID to delete"),
   }, async ({ blog_id, post_id }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
@@ -349,7 +416,7 @@ export function registerBlogTools(ctx: ToolContext) {
     send_email: z.boolean().optional().default(true).describe("Send email notification"),
   }, async ({ blog_id, post_id, send_email }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }
@@ -373,7 +440,7 @@ export function registerBlogTools(ctx: ToolContext) {
     send_email: z.boolean().optional().default(true).describe("Send email when published"),
   }, async ({ blog_id, post_id, scheduled_for, send_email }) => {
     try {
-      const apiKey = getBlogApiKey(env, blog_id);
+      const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
         return { content: [{ type: "text", text: `⛔ No API key found for blog '${blog_id}'` }] };
       }

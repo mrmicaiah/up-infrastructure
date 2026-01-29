@@ -12,6 +12,7 @@ export interface Env {
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   COURIER_API_KEY?: string;  // Email marketing platform API key
+  UP_BLOGS_ADMIN_KEY?: string;  // Admin API key for up-blogs-1 worker (blog registration)
 }
 
 // Tool context passed to each tool registration function

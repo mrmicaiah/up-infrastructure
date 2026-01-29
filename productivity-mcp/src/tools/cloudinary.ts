@@ -153,7 +153,7 @@ export function registerCloudinaryTools(ctx: ToolContext) {
     // Build search expression
     let expression = "resource_type:image";
     if (folder) {
-      // Try asset_folder which is the Media Library folder assignment
+      // Use asset_folder for Media Library folder assignment
       expression = `asset_folder="${folder}"`;
     }
     if (tag) {
@@ -170,7 +170,9 @@ export function registerCloudinaryTools(ctx: ToolContext) {
         expression: expression,
         max_results: max_results,
         sort_by: [{ created_at: "desc" }],
-        with_field: ["tags", "context", "asset_folder"],
+        // Note: asset_folder is NOT a valid with_field option
+        // Valid options: context, tags, image_metadata, image_analysis, metadata, quality_analysis, accessibility_analysis
+        with_field: ["tags", "context"],
       }),
     });
     
@@ -196,9 +198,7 @@ export function registerCloudinaryTools(ctx: ToolContext) {
     for (const img of result.resources) {
       out += `• **${img.public_id}**\n`;
       out += `  ${img.secure_url}\n`;
-      out += `  ${img.width}x${img.height} · ${Math.round(img.bytes / 1024)} KB`;
-      if (img.asset_folder) out += ` · 📁 ${img.asset_folder}`;
-      out += "\n\n";
+      out += `  ${img.width}x${img.height} · ${Math.round(img.bytes / 1024)} KB\n\n`;
     }
     
     out += `_Showing ${result.resources.length} of ${result.total_count || result.resources.length} images_`;

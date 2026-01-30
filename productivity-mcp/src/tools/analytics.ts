@@ -5,9 +5,79 @@ import type { ToolContext } from '../types';
 import { getValidToken } from '../oauth';
 
 const ANALYTICS_DATA_API = 'https://analyticsdata.googleapis.com/v1beta';
+const ANALYTICS_ADMIN_API = 'https://analyticsadmin.googleapis.com/v1beta';
 
 export function registerAnalyticsTools(ctx: ToolContext) {
   const { server, env, getCurrentUser } = ctx;
+
+  // NEW: List all GA4 properties from Google (Admin API)
+  server.tool("analytics_list_from_google", {}, async () => {
+    const userId = getCurrentUser();
+    
+    const token = await getValidToken(env, userId, 'google_analytics');
+    if (!token) {
+      return { content: [{ type: "text", text: "❌ Google Analytics not connected. Run `connect_service google_analytics` to connect." }] };
+    }
+    
+    // Use accountSummaries endpoint - gives us accounts + properties in one call
+    const response = await fetch(`${ANALYTICS_ADMIN_API}/accountSummaries?pageSize=200`, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      }
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      
+      // Check for common errors
+      if (response.status === 403) {
+        return { content: [{ type: "text", text: `❌ Access denied. Make sure:\n1. Google Analytics Admin API is enabled in your Google Cloud Console\n2. Your Google account has access to GA4 properties\n\nError: ${error}` }] };
+      }
+      
+      return { content: [{ type: "text", text: `❌ Failed to fetch GA4 accounts: ${error}` }] };
+    }
+    
+    const data: any = await response.json();
+    
+    if (!data.accountSummaries || data.accountSummaries.length === 0) {
+      return { content: [{ type: "text", text: "📊 No GA4 accounts found.\n\nMake sure your Google account has access to Google Analytics properties." }] };
+    }
+    
+    // Also get what's currently configured
+    const configured = await env.DB.prepare(
+      'SELECT property_id FROM analytics_properties WHERE user_id = ?'
+    ).bind(userId).all();
+    
+    const configuredIds = new Set((configured.results || []).map((r: any) => r.property_id));
+    
+    let output = '📊 **Your GA4 Properties (from Google)**\n\n';
+    
+    for (const account of data.accountSummaries) {
+      const accountName = account.displayName || account.account;
+      const accountId = account.account?.replace('accounts/', '') || 'unknown';
+      
+      output += `**${accountName}** (Account: ${accountId})\n`;
+      
+      if (account.propertySummaries && account.propertySummaries.length > 0) {
+        for (const prop of account.propertySummaries) {
+          const propName = prop.displayName || prop.property;
+          const propId = prop.property?.replace('properties/', '') || 'unknown';
+          const isConfigured = configuredIds.has(propId);
+          
+          output += `  • ${propName}\n`;
+          output += `    Property ID: \`${propId}\`${isConfigured ? ' ✅ configured' : ''}\n`;
+        }
+      } else {
+        output += `  (no properties)\n`;
+      }
+      output += '\n';
+    }
+    
+    output += '---\n';
+    output += '**To add a property:** `analytics_add_property` with the property ID and a friendly name.';
+    
+    return { content: [{ type: "text", text: output }] };
+  });
 
   // List configured GA4 properties
   server.tool("analytics_properties", {}, async () => {
@@ -24,7 +94,7 @@ export function registerAnalyticsTools(ctx: ToolContext) {
     ).bind(userId).all();
     
     if (!properties.results || properties.results.length === 0) {
-      return { content: [{ type: "text", text: "📊 No GA4 properties configured yet.\n\nUse `analytics_add_property` to add a property:\n- property_id: Your GA4 property ID (numeric, e.g., 123456789)\n- name: A friendly name for the property\n- blog_id: (optional) Link to a Blogger blog ID" }] };
+      return { content: [{ type: "text", text: "📊 No GA4 properties configured yet.\n\nUse `analytics_list_from_google` to see all available properties, then use `analytics_add_property` to add one:\n- property_id: Your GA4 property ID (numeric, e.g., 123456789)\n- name: A friendly name for the property\n- blog_id: (optional) Link to a Blogger blog ID" }] };
     }
     
     let output = '📊 **Configured GA4 Properties**\n\n';
@@ -78,6 +148,49 @@ export function registerAnalyticsTools(ctx: ToolContext) {
     ).bind(id, userId, property_id, name, blog_id || null, new Date().toISOString()).run();
     
     return { content: [{ type: "text", text: `✅ Added GA4 property "${name}" (${property_id})${blog_id ? ` linked to blog ${blog_id}` : ''}` }] };
+  });
+
+  // Update a GA4 property
+  server.tool("analytics_update_property", {
+    property_id: z.string().describe("GA4 property ID to update"),
+    name: z.string().optional().describe("New friendly name"),
+    blog_id: z.string().optional().describe("New blog ID to link (use empty string to unlink)")
+  }, async ({ property_id, name, blog_id }) => {
+    const userId = getCurrentUser();
+    
+    // Check if property exists
+    const existing = await env.DB.prepare(
+      'SELECT * FROM analytics_properties WHERE user_id = ? AND property_id = ?'
+    ).bind(userId, property_id).first();
+    
+    if (!existing) {
+      return { content: [{ type: "text", text: `⚠️ Property ${property_id} not found in your configured properties.` }] };
+    }
+    
+    // Build update
+    const updates: string[] = [];
+    const params: any[] = [];
+    
+    if (name !== undefined) {
+      updates.push('name = ?');
+      params.push(name);
+    }
+    if (blog_id !== undefined) {
+      updates.push('blog_id = ?');
+      params.push(blog_id === '' ? null : blog_id);
+    }
+    
+    if (updates.length === 0) {
+      return { content: [{ type: "text", text: `⚠️ No changes specified. Provide \`name\` or \`blog_id\` to update.` }] };
+    }
+    
+    params.push(userId, property_id);
+    
+    await env.DB.prepare(
+      `UPDATE analytics_properties SET ${updates.join(', ')} WHERE user_id = ? AND property_id = ?`
+    ).bind(...params).run();
+    
+    return { content: [{ type: "text", text: `✅ Updated property ${property_id}${name ? ` (renamed to "${name}")` : ''}` }] };
   });
 
   // Remove a GA4 property

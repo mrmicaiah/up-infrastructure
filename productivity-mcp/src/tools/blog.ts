@@ -2,7 +2,7 @@
 // Two APIs supported:
 // 1. micaiahbussey.com via email-bot API (mb_ prefixed tools)
 // 2. Multi-tenant UP Blogs via up-blogs-1 worker (up_blog_ prefixed tools)
-// Last updated: 2026-01-29
+// Last updated: 2026-01-30 - Added ga4_id, facebook_pixel, and config update tools
 
 import { z } from "zod";
 import type { ToolContext } from '../types';
@@ -131,7 +131,9 @@ export function registerBlogTools(ctx: ToolContext) {
       primary: z.string().optional().describe("Primary color hex (e.g., '#2563eb')"),
       lightBg: z.string().optional().describe("Light background color hex (e.g., '#f3f4f6')"),
     }).optional().describe("Site color scheme"),
-  }, async ({ blog_id, site_name, site_url, site_description, author_name, author_id, courier_list_slug, github_repo, github_token, twitter_handle, favicon, default_image, site_colors }) => {
+    ga4_id: z.string().optional().describe("Google Analytics 4 ID (e.g., 'G-XD9FCLD0ZJ')"),
+    facebook_pixel: z.string().optional().describe("Facebook/Meta Pixel ID (e.g., '1219070769724619')"),
+  }, async ({ blog_id, site_name, site_url, site_description, author_name, author_id, courier_list_slug, github_repo, github_token, twitter_handle, favicon, default_image, site_colors, ga4_id, facebook_pixel }) => {
     try {
       const adminKey = env.UP_BLOGS_ADMIN_KEY;
       if (!adminKey) {
@@ -154,6 +156,8 @@ export function registerBlogTools(ctx: ToolContext) {
       if (favicon) payload.favicon = favicon;
       if (default_image) payload.default_image = default_image;
       if (site_colors) payload.site_colors = site_colors;
+      if (ga4_id) payload.ga4_id = ga4_id;
+      if (facebook_pixel) payload.facebook_pixel = facebook_pixel;
       
       const result: any = await upBlogsRequest(env, null, '/admin/register', 'POST', payload, adminKey);
       
@@ -177,6 +181,102 @@ export function registerBlogTools(ctx: ToolContext) {
       out += `**Site URL:** ${site_url}\n\n`;
       out += `🔑 API key has been automatically stored in the database.\n`;
       out += `You can now use all \`up_blog_*\` tools with this blog immediately!`;
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  // Admin tool: Get blog config
+  server.tool("up_blog_get_config", {
+    blog_id: z.string().describe("Blog ID (e.g., 'the-hot-mess', 'beyond-fake-studying')"),
+  }, async ({ blog_id }) => {
+    try {
+      const adminKey = env.UP_BLOGS_ADMIN_KEY;
+      if (!adminKey) {
+        return { content: [{ type: "text", text: `⛔ UP_BLOGS_ADMIN_KEY not configured.` }] };
+      }
+      
+      const result: any = await upBlogsRequest(env, null, `/admin/config/${blog_id}`, 'GET', null, adminKey);
+      const config = result.config;
+      
+      let out = `📋 **Blog Config: ${blog_id}**\n\n`;
+      out += `**Site Name:** ${config.siteName || '(not set)'}\n`;
+      out += `**Site URL:** ${config.siteUrl || '(not set)'}\n`;
+      out += `**Site Description:** ${config.siteDescription || '(not set)'}\n`;
+      out += `**Author Name:** ${config.authorName || '(not set)'}\n`;
+      out += `**Author ID:** ${config.authorId || '(not set)'}\n`;
+      out += `**Courier List:** ${config.courierListSlug || '(not set)'}\n`;
+      out += `**GitHub Repo:** ${config.githubRepo || '(not set)'}\n`;
+      out += `**GitHub Token:** ${config.githubToken || '(not set)'}\n`;
+      out += `**Twitter Handle:** ${config.twitterHandle || '(not set)'}\n`;
+      out += `**Favicon:** ${config.favicon || '(not set)'}\n`;
+      out += `**Default Image:** ${config.defaultImage || '(not set)'}\n`;
+      out += `**Site Colors:** ${config.siteColors ? JSON.stringify(config.siteColors) : '(not set)'}\n`;
+      out += `\n**Analytics:**\n`;
+      out += `  GA4 ID: ${config.ga4Id || '(not set)'}\n`;
+      out += `  Facebook Pixel: ${config.facebookPixel || '(not set)'}\n`;
+      out += `\n**Created:** ${config.createdAt || 'unknown'}\n`;
+      if (config.updatedAt) out += `**Updated:** ${config.updatedAt}\n`;
+      
+      return { content: [{ type: "text", text: out }] };
+    } catch (e: any) {
+      return { content: [{ type: "text", text: `⛔ ${e.message}` }] };
+    }
+  });
+
+  // Admin tool: Update blog config
+  server.tool("up_blog_update_config", {
+    blog_id: z.string().describe("Blog ID (e.g., 'the-hot-mess', 'beyond-fake-studying')"),
+    site_name: z.string().optional().describe("Display name for the blog"),
+    site_url: z.string().optional().describe("Full URL"),
+    site_description: z.string().optional().describe("Blog description for SEO"),
+    author_name: z.string().optional().describe("Default author name"),
+    author_id: z.string().optional().describe("Author ID from authors table"),
+    courier_list_slug: z.string().optional().describe("Courier list slug for email subscriptions"),
+    github_repo: z.string().optional().describe("GitHub repo for static publishing"),
+    github_token: z.string().optional().describe("GitHub token for pushing files"),
+    twitter_handle: z.string().optional().describe("Twitter handle for cards"),
+    favicon: z.string().optional().describe("Favicon URL"),
+    default_image: z.string().optional().describe("Default OG image URL"),
+    site_colors: z.object({
+      primary: z.string().optional(),
+      lightBg: z.string().optional(),
+    }).optional().describe("Site color scheme"),
+    ga4_id: z.string().optional().describe("Google Analytics 4 ID (e.g., 'G-XD9FCLD0ZJ')"),
+    facebook_pixel: z.string().optional().describe("Facebook/Meta Pixel ID"),
+  }, async ({ blog_id, site_name, site_url, site_description, author_name, author_id, courier_list_slug, github_repo, github_token, twitter_handle, favicon, default_image, site_colors, ga4_id, facebook_pixel }) => {
+    try {
+      const adminKey = env.UP_BLOGS_ADMIN_KEY;
+      if (!adminKey) {
+        return { content: [{ type: "text", text: `⛔ UP_BLOGS_ADMIN_KEY not configured.` }] };
+      }
+      
+      const payload: any = {};
+      
+      if (site_name !== undefined) payload.site_name = site_name;
+      if (site_url !== undefined) payload.site_url = site_url;
+      if (site_description !== undefined) payload.site_description = site_description;
+      if (author_name !== undefined) payload.author_name = author_name;
+      if (author_id !== undefined) payload.author_id = author_id;
+      if (courier_list_slug !== undefined) payload.courier_list_slug = courier_list_slug;
+      if (github_repo !== undefined) payload.github_repo = github_repo;
+      if (github_token !== undefined) payload.github_token = github_token;
+      if (twitter_handle !== undefined) payload.twitter_handle = twitter_handle;
+      if (favicon !== undefined) payload.favicon = favicon;
+      if (default_image !== undefined) payload.default_image = default_image;
+      if (site_colors !== undefined) payload.site_colors = site_colors;
+      if (ga4_id !== undefined) payload.ga4_id = ga4_id;
+      if (facebook_pixel !== undefined) payload.facebook_pixel = facebook_pixel;
+      
+      const result: any = await upBlogsRequest(env, null, `/admin/config/${blog_id}`, 'PUT', payload, adminKey);
+      
+      let out = `✅ **Blog Config Updated: ${blog_id}**\n\n`;
+      out += `Updated fields:\n`;
+      for (const [key, value] of Object.entries(payload)) {
+        out += `• ${key}: ${typeof value === 'object' ? JSON.stringify(value) : value}\n`;
+      }
       
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {

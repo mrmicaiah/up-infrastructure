@@ -1,4 +1,5 @@
 // OAuth helpers and constants
+// v2 - clean rebuild
 
 // Google OAuth
 export const GOOGLE_OAUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';

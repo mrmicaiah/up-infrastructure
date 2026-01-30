@@ -9,7 +9,7 @@ import { createApiRoutes } from './api-routes';
 // USER AGENTS
 // ==================
 export class ProductivityMCP extends McpAgent {
-  server = new McpServer({ name: "Untitled Publishers Productivity", version: "5.1.0" });
+  server = new McpServer({ name: "Untitled Publishers Productivity", version: "5.1.1" });
 
   async init() {
     const env = this.env as Env;
@@ -48,7 +48,7 @@ export default {
     const workerName = env.WORKER_NAME || `productivity-${userId === 'micaiah' ? 'mcp-server' : userId}`;
     const workerUrl = `https://${workerName}.micaiah-tasks.workers.dev`;
 
-// REST API routes for dashboard
+    // REST API routes for dashboard
     if (url.pathname.startsWith('/api/')) {
       const apiRoutes = createApiRoutes(env);
       return apiRoutes.fetch(request);
@@ -159,6 +159,6 @@ export default {
       return ProductivityMCP.serveSSE("/sse").fetch(request, env, ctx);
     }
 
-    return new Response(JSON.stringify({ status: "running", user: userId, version: "5.1.0" }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ status: "running", user: userId, version: "5.1.1" }), { headers: { "Content-Type": "application/json" } });
   },
 };

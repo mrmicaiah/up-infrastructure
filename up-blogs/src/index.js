@@ -6,7 +6,7 @@
  * KV Structure:
  *   blog:{blogId}:apiKey       - API key for auth
  *   blog:{blogId}:posts        - JSON array of all posts
- *   blog:{blogId}:config       - { listId, githubRepo, githubToken, siteColors, template, courierListSlug }
+ *   blog:{blogId}:config       - { listId, githubRepo, githubToken, siteColors, template, courierListSlug, ga4Id, facebookPixel }
  *   blog:{blogId}:comments:{postId} - approved comments
  *   blog:{blogId}:comments:pending  - pending comments queue
  *   blog:{blogId}:likes:{postId}    - { count: N, ips: ["hash1", ...] }
@@ -28,13 +28,14 @@
  * Admin Endpoints:
  *   POST /admin/register - Register a new blog (requires ADMIN_API_KEY)
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
+ *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-01-29 - Added admin registration endpoints
+ * Last updated: 2026-01-30 - Added ga4Id and facebookPixel to config, added update config endpoint
  */
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
@@ -160,6 +161,47 @@ function generateSubscribeForm(blogId, config, workerUrl) {
 </div>`;
 }
 
+// Generate tracking scripts (GA4 and Facebook Pixel)
+function generateTrackingScripts(config) {
+  let scripts = '';
+  
+  // Google Analytics 4
+  if (config.ga4Id) {
+    scripts += `
+  <!-- Google Analytics 4 -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=${config.ga4Id}"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', '${config.ga4Id}');
+  </script>`;
+  }
+  
+  // Facebook Pixel
+  if (config.facebookPixel) {
+    scripts += `
+  <!-- Meta Pixel -->
+  <script>
+    !function(f,b,e,v,n,t,s)
+    {if(f.fbq)return;n=f.fbq=function(){n.callMethod?
+    n.callMethod.apply(n,arguments):n.queue.push(arguments)};
+    if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';
+    n.queue=[];t=b.createElement(e);t.async=!0;
+    t.src=v;s=b.getElementsByTagName(e)[0];
+    s.parentNode.insertBefore(t,s)}(window, document,'script',
+    'https://connect.facebook.net/en_US/fbevents.js');
+    fbq('init', '${config.facebookPixel}');
+    fbq('track', 'PageView');
+  </script>
+  <noscript><img height="1" width="1" style="display:none"
+    src="https://www.facebook.com/tr?id=${config.facebookPixel}&ev=PageView&noscript=1"
+  /></noscript>`;
+  }
+  
+  return scripts;
+}
+
 // Generate full post page HTML with SEO elements
 function generatePostPage(post, config, blogId, workerUrl) {
   const siteUrl = config.siteUrl || `https://${blogId}.com`;
@@ -203,6 +245,9 @@ function generatePostPage(post, config, blogId, workerUrl) {
     "mainEntityOfPage": canonicalUrl
   });
   
+  // Generate tracking scripts
+  const trackingScripts = generateTrackingScripts(config);
+  
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -242,6 +287,7 @@ function generatePostPage(post, config, blogId, workerUrl) {
   
   <!-- Favicon -->
   ${config.favicon ? `<link rel="icon" href="${config.favicon}">` : ''}
+  ${trackingScripts}
   
   <style>
     * { box-sizing: border-box; }
@@ -393,6 +439,9 @@ function generateBlogIndex(posts, config, blogId) {
     }))
   });
   
+  // Generate tracking scripts
+  const trackingScripts = generateTrackingScripts(config);
+  
   const postsHtml = sorted.map(post => {
     const excerpt = generateExcerpt(post.content, 150);
     const postDate = new Date(post.published_at || post.date).toLocaleDateString('en-US', { 
@@ -448,6 +497,7 @@ function generateBlogIndex(posts, config, blogId) {
   
   <!-- Favicon -->
   ${config.favicon ? `<link rel="icon" href="${config.favicon}">` : ''}
+  ${trackingScripts}
   
   <style>
     * { box-sizing: border-box; }
@@ -785,7 +835,7 @@ export default {
     
     // Health check
     if (path === '/' || path === '/health') {
-      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '1.10.0' });
+      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '1.11.0' });
     }
     
     // ===== ADMIN ENDPOINTS =====
@@ -822,7 +872,9 @@ export default {
           site_colors,
           publisher_name,
           publisher_logo,
-          author_url
+          author_url,
+          ga4_id,
+          facebook_pixel
         } = body;
         
         // Validate required fields
@@ -861,6 +913,8 @@ export default {
           siteColors: site_colors || { primary: '#2563eb', lightBg: '#f3f4f6' },
           publisherName: publisher_name || 'Untitled Publishers',
           publisherLogo: publisher_logo || 'https://untitledpublishers.com/logo.png',
+          ga4Id: ga4_id || null,
+          facebookPixel: facebook_pixel || null,
           createdAt: new Date().toISOString()
         };
         
@@ -881,6 +935,118 @@ export default {
       } catch (e) {
         console.error('Admin register error:', e);
         return jsonResponse({ error: 'Failed to register blog', details: e.message }, 500);
+      }
+    }
+    
+    // PUT /admin/config/:blogId - Update blog config
+    if (path.match(/^\/admin\/config\/[a-z0-9-]+$/) && request.method === 'PUT') {
+      if (!requireAdminAuth()) {
+        return jsonResponse({ error: 'Unauthorized - Admin API key required' }, 401);
+      }
+      
+      try {
+        const blogId = path.split('/')[3];
+        
+        // Check if blog exists
+        const existingConfig = await env.BLOGS.get(`blog:${blogId}:config`);
+        if (!existingConfig) {
+          return jsonResponse({ error: 'Blog not found', blog_id: blogId }, 404);
+        }
+        
+        const currentConfig = JSON.parse(existingConfig);
+        const body = await request.json();
+        
+        // Fields that can be updated
+        const {
+          site_name,
+          site_url,
+          site_description,
+          author_name,
+          author_id,
+          courier_list_slug,
+          github_repo,
+          github_token,
+          twitter_handle,
+          favicon,
+          default_image,
+          site_colors,
+          publisher_name,
+          publisher_logo,
+          author_url,
+          ga4_id,
+          facebook_pixel
+        } = body;
+        
+        // Update only provided fields
+        const updatedConfig = {
+          ...currentConfig,
+          ...(site_name !== undefined && { siteName: site_name }),
+          ...(site_url !== undefined && { siteUrl: site_url }),
+          ...(site_description !== undefined && { siteDescription: site_description }),
+          ...(author_name !== undefined && { authorName: author_name }),
+          ...(author_id !== undefined && { authorId: author_id }),
+          ...(author_url !== undefined && { authorUrl: author_url }),
+          ...(courier_list_slug !== undefined && { courierListSlug: courier_list_slug }),
+          ...(github_repo !== undefined && { githubRepo: github_repo }),
+          ...(github_token !== undefined && { githubToken: github_token }),
+          ...(twitter_handle !== undefined && { twitterHandle: twitter_handle }),
+          ...(favicon !== undefined && { favicon: favicon }),
+          ...(default_image !== undefined && { defaultImage: default_image }),
+          ...(site_colors !== undefined && { siteColors: site_colors }),
+          ...(publisher_name !== undefined && { publisherName: publisher_name }),
+          ...(publisher_logo !== undefined && { publisherLogo: publisher_logo }),
+          ...(ga4_id !== undefined && { ga4Id: ga4_id }),
+          ...(facebook_pixel !== undefined && { facebookPixel: facebook_pixel }),
+          updatedAt: new Date().toISOString()
+        };
+        
+        await env.BLOGS.put(`blog:${blogId}:config`, JSON.stringify(updatedConfig));
+        
+        console.log(`Blog config updated: ${blogId}`);
+        
+        return jsonResponse({
+          success: true,
+          blog_id: blogId,
+          config: updatedConfig,
+          message: 'Blog config updated successfully'
+        });
+        
+      } catch (e) {
+        console.error('Admin update config error:', e);
+        return jsonResponse({ error: 'Failed to update config', details: e.message }, 500);
+      }
+    }
+    
+    // GET /admin/config/:blogId - Get blog config (admin only)
+    if (path.match(/^\/admin\/config\/[a-z0-9-]+$/) && request.method === 'GET') {
+      if (!requireAdminAuth()) {
+        return jsonResponse({ error: 'Unauthorized - Admin API key required' }, 401);
+      }
+      
+      try {
+        const blogId = path.split('/')[3];
+        
+        const configJson = await env.BLOGS.get(`blog:${blogId}:config`);
+        if (!configJson) {
+          return jsonResponse({ error: 'Blog not found', blog_id: blogId }, 404);
+        }
+        
+        const config = JSON.parse(configJson);
+        
+        // Mask sensitive fields
+        const safeConfig = {
+          ...config,
+          githubToken: config.githubToken ? '***masked***' : null
+        };
+        
+        return jsonResponse({
+          blog_id: blogId,
+          config: safeConfig
+        });
+        
+      } catch (e) {
+        console.error('Admin get config error:', e);
+        return jsonResponse({ error: 'Failed to get config', details: e.message }, 500);
       }
     }
     
@@ -927,6 +1093,8 @@ export default {
             courierListSlug: config.courierListSlug || null,
             githubRepo: config.githubRepo || null,
             hasGithubToken: !!config.githubToken,
+            ga4Id: config.ga4Id || null,
+            facebookPixel: config.facebookPixel || null,
             createdAt: config.createdAt || null,
             postCounts: {
               published: publishedPosts.length,

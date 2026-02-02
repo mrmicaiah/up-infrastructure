@@ -12,6 +12,7 @@
  * - content/     → Publishing (blog, authors)
  * - integrations/→ External services (drive, github, etc.)
  * - system/      → System tools (notes, skills, connections)
+ * - client/      → Client-facing tools (capture portals)
  */
 
 import type { ToolContext } from '../types';
@@ -53,6 +54,9 @@ import { registerAnalyticsTools } from './analytics';
 import { registerNotesTools } from './notes';
 import { registerSkillsTools } from './skills';
 
+// === CLIENT ===
+import { registerCaptureTools } from './capture';
+
 export function registerAllTools(ctx: ToolContext) {
   // Helm (replaces old tasks.ts)
   registerHelmTools(ctx);
@@ -89,6 +93,9 @@ export function registerAllTools(ctx: ToolContext) {
   // System
   registerNotesTools(ctx);
   registerSkillsTools(ctx);
+  
+  // Client
+  registerCaptureTools(ctx);
 }
 
 // Re-export for selective use
@@ -113,4 +120,5 @@ export {
   registerAnalyticsTools,
   registerNotesTools,
   registerSkillsTools,
+  registerCaptureTools,
 };

@@ -13,6 +13,10 @@ export interface Env {
   GITHUB_CLIENT_SECRET?: string;
   COURIER_API_KEY?: string;  // Email marketing platform API key
   UP_BLOGS_ADMIN_KEY?: string;  // Admin API key for up-blogs-1 worker (blog registration)
+  // Cloudinary
+  CLOUDINARY_CLOUD_NAME?: string;
+  CLOUDINARY_API_KEY?: string;
+  CLOUDINARY_API_SECRET?: string;
 }
 
 // Tool context passed to each tool registration function

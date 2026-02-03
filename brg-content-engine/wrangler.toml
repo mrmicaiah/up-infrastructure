@@ -29,3 +29,7 @@ vars = { ENVIRONMENT = "production" }
 # Google Business Profile (for posting updates)
 # wrangler secret put GOOGLE_CLIENT_ID
 # wrangler secret put GOOGLE_CLIENT_SECRET
+
+# GitHub (for committing project pages to trigger deploy)
+# wrangler secret put GITHUB_TOKEN
+# Token needs repo scope for mrmicaiah/bluerivergutters

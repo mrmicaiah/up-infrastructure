@@ -414,7 +414,7 @@ function renderErrorPage(title, message) {
 function handleRoot(request, env) {
   return new Response(JSON.stringify({
     service: 'Blue River Gutters Content Engine',
-    version: '0.2.0',
+    version: '0.3.0',
     environment: env.ENVIRONMENT || 'unknown',
     endpoints: {
       health: '/health',
@@ -521,6 +521,93 @@ async function processWebhookEvent(payload, env) {
 async function handleVisitCompleted(payload, env) {
   console.log('=== Visit Completed Event ===');
   const data = payload.data || payload;
-  console.log('Visit data:', JSON.stringify(data, null, 2));
-  console.log('Visit completed event processed (logging only for now)');
+  console.log('Webhook data:', JSON.stringify(data, null, 2));
+  
+  // Extract visit/job ID from webhook payload
+  // Jobber webhook payloads typically include webHookEvent with the ID
+  const visitId = data.webHookEvent?.itemId || data.visitId || data.id;
+  const jobId = data.webHookEvent?.jobId || data.jobId;
+  
+  if (!visitId && !jobId) {
+    console.log('No visit or job ID found in webhook payload');
+    console.log('Available keys:', Object.keys(data));
+    return;
+  }
+  
+  try {
+    // Get access token
+    const accessToken = await getAccessToken(env);
+    
+    // Import and use the Jobber API client
+    const { getVisit, getJob, extractContentData, determineContentOpportunities } = await import('./jobber-api.js');
+    
+    let jobData;
+    
+    if (visitId) {
+      // Fetch visit details (includes job data)
+      console.log(`Fetching visit details for: ${visitId}`);
+      const visitData = await getVisit(accessToken, visitId);
+      jobData = visitData.job;
+      console.log('Visit fetched successfully');
+    } else if (jobId) {
+      // Fetch job directly
+      console.log(`Fetching job details for: ${jobId}`);
+      jobData = await getJob(accessToken, jobId);
+      console.log('Job fetched successfully');
+    }
+    
+    if (!jobData) {
+      console.log('No job data retrieved');
+      return;
+    }
+    
+    // Log the normalized job data
+    console.log('=== Job Data ===');
+    console.log('Job #:', jobData.jobNumber);
+    console.log('Title:', jobData.title);
+    console.log('Location:', jobData.location?.publicDisplay);
+    console.log('Services:', jobData.services.join(', '));
+    console.log('Photos:', jobData.photos.length);
+    console.log('Notes:', jobData.notes.length);
+    
+    // Extract content-ready data
+    const contentData = extractContentData(jobData);
+    console.log('=== Content Data ===');
+    console.log('City:', contentData.city);
+    console.log('Primary Service:', contentData.primaryService);
+    console.log('Customer Type:', contentData.customerType);
+    console.log('Has Photos:', contentData.hasPhotos);
+    
+    // Determine what content we can create
+    const opportunities = determineContentOpportunities(contentData);
+    console.log('=== Content Opportunities ===');
+    opportunities.forEach(opp => {
+      console.log(`- ${opp.type} (${opp.priority}): ${opp.reason}`);
+    });
+    
+    // Store job data in KV for later processing
+    if (env.TOKENS) {
+      const jobKey = `job:${jobData.id}`;
+      await env.TOKENS.put(jobKey, JSON.stringify({
+        jobData,
+        contentData,
+        opportunities,
+        processedAt: new Date().toISOString(),
+      }), {
+        expirationTtl: 60 * 60 * 24 * 30, // 30 days
+      });
+      console.log(`Job data stored in KV: ${jobKey}`);
+    }
+    
+    // TODO: Future tasks will trigger actual content generation here
+    // - Send review request email
+    // - Queue case study generation
+    // - Update city page stats
+    
+    console.log('Visit completed event processed successfully');
+    
+  } catch (error) {
+    console.error('Error processing visit completed event:', error);
+    // Don't throw - we already responded 200 to Jobber
+  }
 }

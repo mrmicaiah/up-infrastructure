@@ -4,15 +4,19 @@ compatibility_date = "2024-01-01"
 
 [vars]
 ENVIRONMENT = "development"
-BRG_LOCATION_ID = "" # GBP location ID: accounts/{accountId}/locations/{locationId}
+CLOUDINARY_CLOUD_NAME = "dxzw1zwez"
 
-# KV: wrangler kv:namespace create "TOKENS"
-# [[kv_namespaces]]
-# binding = "TOKENS"
-# id = "<your-kv-namespace-id>"
+# KV Namespace for tokens and cache
+[[kv_namespaces]]
+binding = "TOKENS"
+id = "brg-content-tokens"
 
 [env.production]
 vars = { ENVIRONMENT = "production" }
+
+# Cron trigger for daily review sync (8am Central = 14:00 UTC)
+[triggers]
+crons = ["0 14 * * *"]
 
 # ============================================================
 # SECRETS - Add with: wrangler secret put <SECRET_NAME>
@@ -26,7 +30,7 @@ vars = { ENVIRONMENT = "production" }
 # wrangler secret put CLOUDINARY_API_KEY
 # wrangler secret put CLOUDINARY_API_SECRET
 
-# Google Business Profile (for posting updates)
+# Google Business Profile (for posting updates and fetching reviews)
 # wrangler secret put GOOGLE_CLIENT_ID
 # wrangler secret put GOOGLE_CLIENT_SECRET
 

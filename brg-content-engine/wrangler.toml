@@ -1,0 +1,22 @@
+name = "brg-content-engine"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# Development settings
+[vars]
+ENVIRONMENT = "development"
+
+# Production environment
+[env.production]
+vars = { ENVIRONMENT = "production" }
+
+# KV namespace for storing job data (create later with: wrangler kv:namespace create "JOBS")
+# [[kv_namespaces]]
+# binding = "JOBS"
+# id = "<namespace-id>"
+
+# D1 database for structured data (optional, create later)
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "brg-content-engine"
+# database_id = "<database-id>"

@@ -1,0 +1,23 @@
+{
+  "name": "brg-content-engine",
+  "version": "0.1.0",
+  "description": "Blue River Gutters Content Engine - Automates content creation from Jobber job completions",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:production": "wrangler deploy --env production",
+    "tail": "wrangler tail"
+  },
+  "keywords": [
+    "cloudflare-workers",
+    "jobber",
+    "webhook",
+    "content-automation"
+  ],
+  "author": "Untitled Publishers",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

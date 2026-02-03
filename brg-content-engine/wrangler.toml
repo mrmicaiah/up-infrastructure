@@ -4,6 +4,7 @@ compatibility_date = "2024-01-01"
 
 [vars]
 ENVIRONMENT = "development"
+BRG_LOCATION_ID = "" # GBP location ID: accounts/{accountId}/locations/{locationId}
 
 # KV: wrangler kv:namespace create "TOKENS"
 # [[kv_namespaces]]
@@ -13,8 +14,18 @@ ENVIRONMENT = "development"
 [env.production]
 vars = { ENVIRONMENT = "production" }
 
-# Secrets:
+# ============================================================
+# SECRETS - Add with: wrangler secret put <SECRET_NAME>
+# ============================================================
+
+# Jobber OAuth (for pulling job completion data)
 # wrangler secret put JOBBER_CLIENT_ID
 # wrangler secret put JOBBER_CLIENT_SECRET
+
+# Cloudinary (for photo uploads)
 # wrangler secret put CLOUDINARY_API_KEY
 # wrangler secret put CLOUDINARY_API_SECRET
+
+# Google Business Profile (for posting updates)
+# wrangler secret put GOOGLE_CLIENT_ID
+# wrangler secret put GOOGLE_CLIENT_SECRET

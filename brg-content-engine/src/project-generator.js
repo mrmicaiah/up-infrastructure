@@ -38,16 +38,21 @@ const ALABAMA_CITIES = [
 ];
 
 /**
- * Generate a project page from job data
+ * Generate a project page from content data
+ * @param {Object} contentData - Extracted content data from jobber-api
+ * @param {Object} options - Generation options
+ * @returns {Object} - Project data ready for Eleventy
  */
-export function generateProjectPage(jobData, processedPhotos = []) {
-  const city = extractCity(jobData);
-  const service = detectService(jobData);
-  const date = formatDate(jobData.completedAt || jobData.created_at);
+export function generateProject(contentData, options = {}) {
+  const city = contentData.city || 'North Alabama';
+  const service = contentData.primaryService || 'Seamless Gutters';
+  const date = formatDate(contentData.completedAt || new Date());
   const slug = generateSlug(city, service, date);
-  const photos = processedPhotos.filter(p => p.processed && p.cloudinaryPublicId);
   
-  return {
+  // Get processed photos from contentData
+  const photos = (contentData.processedPhotos || []).filter(p => p.processed && p.cloudinaryPublicId);
+  
+  const project = {
     title: generateTitle(service, city),
     slug,
     date: date.iso,
@@ -56,13 +61,46 @@ export function generateProjectPage(jobData, processedPhotos = []) {
     thumbnail: photos[0] ? getThumbnailUrl(photos[0].cloudinaryPublicId) : null,
     images: photos.map(p => getGalleryUrl(p.cloudinaryPublicId)),
     description: generateDescription(service, city),
-    details: generateDetails(jobData, service, city),
-    specs: extractSpecs(jobData, service),
-    featured: false,
-    jobNumber: jobData.jobNumber || jobData.id,
-    schema: generateSchema(service, city, photos),
-    relatedLinks: generateRelatedLinks(city, service),
+    details: generateDetails(contentData, service, city),
+    specs: extractSpecs(contentData, service),
+    featured: options.featured || false,
+    jobNumber: contentData.jobNumber || contentData.jobId,
   };
+  
+  // Include schema if requested
+  if (options.includeSchema) {
+    project.schema = generateSchema(service, city, photos);
+  }
+  
+  return project;
+}
+
+// Alias for backward compatibility
+export const generateProjectPage = generateProject;
+
+/**
+ * Get URL for a service page
+ */
+export function getServicePageUrl(service) {
+  const serviceSlug = service.toLowerCase().replace(/\s+/g, '-');
+  return `/services/${serviceSlug}/`;
+}
+
+/**
+ * Get URL for a city landing page
+ */
+export function getCityPageUrl(city) {
+  const citySlug = city.toLowerCase().replace(/\s+/g, '-');
+  return `/gutters-${citySlug}-al/`;
+}
+
+/**
+ * Get URL for a city+service page
+ */
+export function getCityServicePageUrl(city, service) {
+  const citySlug = city.toLowerCase().replace(/\s+/g, '-');
+  const serviceSlug = service.toLowerCase().replace(/\s+/g, '-');
+  return `/${serviceSlug}-${citySlug}-al/`;
 }
 
 function extractCity(jobData) {
@@ -118,8 +156,8 @@ function generateDescription(service, city) {
   return templates[service] || templates['Seamless Gutters'];
 }
 
-function generateDetails(jobData, service, city) {
-  const notes = jobData.notes || jobData.description || '';
+function generateDetails(contentData, service, city) {
+  const notes = contentData.notes || contentData.description || '';
   if (notes.length > 50) return notes.replace(/\n+/g, ' ').trim().slice(0, 500);
   
   const hooks = {
@@ -140,9 +178,9 @@ function generateDetails(jobData, service, city) {
   return templates[service] || templates['Seamless Gutters'];
 }
 
-function extractSpecs(jobData, service) {
+function extractSpecs(contentData, service) {
   const specs = {};
-  const lineItems = jobData.lineItems || jobData.line_items || [];
+  const lineItems = contentData.lineItems || contentData.line_items || [];
   for (const item of lineItems) {
     const name = (item.name || '').toLowerCase();
     const qty = item.quantity || item.qty;
@@ -176,11 +214,9 @@ function generateSchema(service, city, photos) {
 }
 
 function generateRelatedLinks(city, service) {
-  const citySlug = city.toLowerCase().replace(/\s+/g, '-');
-  const serviceSlug = service.toLowerCase().replace(/\s+/g, '-');
   return {
-    cityPage: `/gutters-${citySlug}-al/`,
-    servicePage: `/services/${serviceSlug}/`,
+    cityPage: getCityPageUrl(city),
+    servicePage: getServicePageUrl(service),
     allProjects: '/recent-projects/',
   };
 }
@@ -206,5 +242,5 @@ export function projectToMarkdown(project) {
 }
 
 export function generateProjectBatch(jobs) {
-  return jobs.map(({ jobData, photos }) => generateProjectPage(jobData, photos));
+  return jobs.map(({ jobData, photos }) => generateProject(jobData, photos));
 }

@@ -8,3 +8,6 @@ WORKER_URL = "https://up-blogs-1.micaiah-tasks.workers.dev"
 [[kv_namespaces]]
 binding = "BLOGS"
 id = "eb9b2852cb44441797e0989ced3178d2"
+
+[triggers]
+crons = ["0 * * * *"]

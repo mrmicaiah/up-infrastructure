@@ -12,83 +12,113 @@
  * - /auth/google/callback - Handles Google OAuth callback
  * - /webhook/jobber       - Receives Jobber webhooks (triggers pipeline)
  * - /api/reviews          - Fetch Google reviews for website
+ * - /api/reviews/sync     - Force sync reviews from GBP
  * - /health               - Health check
  * - /test/pipeline        - Manual pipeline test (dev only)
  * 
- * Version: 1.1.0 - Added reviews API
+ * Scheduled:
+ * - Daily at 8am Central (14:00 UTC) - Auto-sync reviews from GBP
+ * 
+ * Version: 1.2.0
  */
 
 import { runContentPipeline } from './orchestrator.js';
-import { getReviews, getAccounts, getLocations, getGoogleAccessToken } from './google-gbp.js';
+import { getReviews, getAccounts, getLocations } from './google-gbp.js';
 
 export default {
+  // HTTP request handler
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     
-    // CORS headers for API endpoints
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     };
     
-    // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders });
     }
     
-    // Route handling
     switch (url.pathname) {
       case '/':
         return handleRoot(request, env);
-      
-      // Jobber OAuth
       case '/auth/jobber':
         return handleJobberAuth(request, env);
       case '/auth/jobber/callback':
         return handleJobberCallback(request, env);
       case '/auth/status':
         return handleAuthStatus(request, env);
-      
-      // Google OAuth (for GMB)
       case '/auth/google':
         return handleGoogleAuth(request, env);
       case '/auth/google/callback':
         return handleGoogleCallback(request, env);
-      
-      // API Endpoints
       case '/api/reviews':
         return handleGetReviews(request, env, corsHeaders);
       case '/api/reviews/sync':
         return handleSyncReviews(request, env, ctx, corsHeaders);
-      
-      // Webhooks
       case '/webhook/jobber':
         return handleJobberWebhook(request, env, ctx);
-      
-      // Health & Testing
       case '/health':
         return handleHealth(env);
       case '/test/pipeline':
         return handleTestPipeline(request, env);
-      
       default:
         return new Response('Not Found', { status: 404 });
     }
   },
+  
+  // Scheduled cron handler - runs daily at 8am Central (14:00 UTC)
+  async scheduled(event, env, ctx) {
+    console.log('=== Scheduled Review Sync ===');
+    console.log('Cron:', event.cron);
+    console.log('Time:', new Date().toISOString());
+    
+    ctx.waitUntil(syncReviewsTask(env));
+  },
 };
+
+// =============================================================================
+// SCHEDULED TASK
+// =============================================================================
+
+async function syncReviewsTask(env) {
+  try {
+    console.log('Starting scheduled review sync...');
+    
+    if (!env.TOKENS) {
+      console.error('KV not configured');
+      return;
+    }
+    
+    const googleTokens = await env.TOKENS.get('google:tokens', { type: 'json' });
+    if (!googleTokens) {
+      console.log('Google not connected, skipping review sync');
+      return;
+    }
+    
+    const reviewsData = await fetchAndFormatReviews(env);
+    
+    await env.TOKENS.put('reviews:data', JSON.stringify(reviewsData), {
+      expirationTtl: 60 * 60 * 24,
+    });
+    await env.TOKENS.put('reviews:fallback', JSON.stringify(reviewsData));
+    
+    await updateGitHubReviews(reviewsData, env);
+    
+    console.log(`Review sync complete: ${reviewsData.reviews.length} reviews, ${reviewsData.business.averageRating}★`);
+    
+  } catch (error) {
+    console.error('Scheduled sync error:', error);
+  }
+}
 
 // =============================================================================
 // REVIEWS API
 // =============================================================================
 
-/**
- * GET /api/reviews - Fetch reviews from cache or GBP
- * Returns reviews in format compatible with bluerivergutters website
- */
 async function handleGetReviews(request, env, corsHeaders) {
   try {
-    // Check cache first
     if (env.TOKENS) {
       const cached = await env.TOKENS.get('reviews:data', { type: 'json' });
       if (cached) {
@@ -98,13 +128,11 @@ async function handleGetReviews(request, env, corsHeaders) {
       }
     }
     
-    // Fetch fresh from GBP
     const reviewsData = await fetchAndFormatReviews(env);
     
-    // Cache for 1 hour
     if (env.TOKENS) {
       await env.TOKENS.put('reviews:data', JSON.stringify(reviewsData), {
-        expirationTtl: 60 * 60, // 1 hour
+        expirationTtl: 60 * 60,
       });
     }
     
@@ -115,7 +143,6 @@ async function handleGetReviews(request, env, corsHeaders) {
   } catch (error) {
     console.error('Reviews fetch error:', error);
     
-    // Return fallback data if available
     if (env.TOKENS) {
       const fallback = await env.TOKENS.get('reviews:fallback', { type: 'json' });
       if (fallback) {
@@ -135,19 +162,14 @@ async function handleGetReviews(request, env, corsHeaders) {
   }
 }
 
-/**
- * POST /api/reviews/sync - Force refresh reviews from GBP and update GitHub
- */
 async function handleSyncReviews(request, env, ctx, corsHeaders) {
   if (request.method !== 'POST') {
     return new Response('Method Not Allowed', { status: 405, headers: corsHeaders });
   }
   
   try {
-    // Fetch fresh reviews
     const reviewsData = await fetchAndFormatReviews(env);
     
-    // Update cache
     if (env.TOKENS) {
       await env.TOKENS.put('reviews:data', JSON.stringify(reviewsData), {
         expirationTtl: 60 * 60,
@@ -155,7 +177,6 @@ async function handleSyncReviews(request, env, ctx, corsHeaders) {
       await env.TOKENS.put('reviews:fallback', JSON.stringify(reviewsData));
     }
     
-    // Update GitHub in background
     ctx.waitUntil(updateGitHubReviews(reviewsData, env));
     
     return new Response(JSON.stringify({
@@ -180,11 +201,7 @@ async function handleSyncReviews(request, env, ctx, corsHeaders) {
   }
 }
 
-/**
- * Fetch reviews from GBP and format for website
- */
 async function fetchAndFormatReviews(env) {
-  // Get location ID (cached or fetch)
   let locationId = env.GBP_LOCATION_ID;
   
   if (!locationId && env.TOKENS) {
@@ -192,7 +209,6 @@ async function fetchAndFormatReviews(env) {
   }
   
   if (!locationId) {
-    // Discover account and location
     const accounts = await getAccounts(env);
     if (!accounts.accounts?.length) {
       throw new Error('No GBP accounts found');
@@ -207,16 +223,13 @@ async function fetchAndFormatReviews(env) {
     
     locationId = locations.locations[0].name;
     
-    // Cache location ID
     if (env.TOKENS) {
       await env.TOKENS.put('google:locationId', locationId);
     }
   }
   
-  // Fetch reviews
   const gbpReviews = await getReviews(env, locationId, 50);
   
-  // Calculate aggregate stats
   let totalRating = 0;
   const reviews = [];
   
@@ -254,9 +267,6 @@ async function fetchAndFormatReviews(env) {
   };
 }
 
-/**
- * Update reviews.json in GitHub
- */
 async function updateGitHubReviews(reviewsData, env) {
   if (!env.GITHUB_TOKEN) {
     console.log('No GitHub token, skipping repo update');
@@ -267,7 +277,6 @@ async function updateGitHubReviews(reviewsData, env) {
     const content = JSON.stringify(reviewsData, null, 2);
     const base64Content = btoa(unescape(encodeURIComponent(content)));
     
-    // Get current file SHA
     const getResponse = await fetch(
       'https://api.github.com/repos/mrmicaiah/bluerivergutters/contents/src/_data/reviews.json',
       {
@@ -285,7 +294,6 @@ async function updateGitHubReviews(reviewsData, env) {
       sha = fileData.sha;
     }
     
-    // Update or create file
     const updateResponse = await fetch(
       'https://api.github.com/repos/mrmicaiah/bluerivergutters/contents/src/_data/reviews.json',
       {
@@ -316,9 +324,6 @@ async function updateGitHubReviews(reviewsData, env) {
   }
 }
 
-/**
- * Convert GBP star rating enum to number
- */
 function starRatingToNumber(starRating) {
   const ratings = {
     'ONE': 1, 'TWO': 2, 'THREE': 3, 'FOUR': 4, 'FIVE': 5,
@@ -327,9 +332,6 @@ function starRatingToNumber(starRating) {
   return ratings[starRating] || 5;
 }
 
-/**
- * Detect service type from review text
- */
 function detectService(text) {
   if (!text) return 'Gutter Services';
   const lower = text.toLowerCase();
@@ -341,9 +343,6 @@ function detectService(text) {
   return 'Seamless Gutters';
 }
 
-/**
- * Detect city from review text
- */
 function detectCity(text) {
   if (!text) return 'North Alabama';
   const lower = text.toLowerCase();
@@ -666,7 +665,7 @@ async function handleVisitCompleted(payload, env) {
 function handleRoot(request, env) {
   return new Response(JSON.stringify({
     service: 'Blue River Gutters Content Engine',
-    version: '1.1.0',
+    version: '1.2.0',
     environment: env.ENVIRONMENT || 'unknown',
     endpoints: {
       health: '/health',
@@ -677,6 +676,9 @@ function handleRoot(request, env) {
       reviews: '/api/reviews',
       reviewsSync: '/api/reviews/sync (POST)',
       testPipeline: '/test/pipeline (dev only)',
+    },
+    scheduled: {
+      reviewSync: 'Daily at 8am Central (14:00 UTC)',
     },
   }, null, 2), { headers: { 'Content-Type': 'application/json' } });
 }

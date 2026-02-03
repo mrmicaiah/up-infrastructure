@@ -6,17 +6,29 @@ compatibility_date = "2024-01-01"
 [vars]
 ENVIRONMENT = "development"
 
+# KV namespace for storing OAuth tokens and job data
+# Create with: wrangler kv:namespace create "TOKENS"
+# Then uncomment and add the ID below:
+# [[kv_namespaces]]
+# binding = "TOKENS"
+# id = "<your-kv-namespace-id>"
+
 # Production environment
 [env.production]
 vars = { ENVIRONMENT = "production" }
 
-# KV namespace for storing job data (create later with: wrangler kv:namespace create "JOBS")
-# [[kv_namespaces]]
-# binding = "JOBS"
-# id = "<namespace-id>"
+# Production KV namespace (create separately for production)
+# Create with: wrangler kv:namespace create "TOKENS" --env production
+# [[env.production.kv_namespaces]]
+# binding = "TOKENS"
+# id = "<your-production-kv-namespace-id>"
 
-# D1 database for structured data (optional, create later)
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "brg-content-engine"
-# database_id = "<database-id>"
+# =============================================================================
+# SECRETS (add via wrangler secret put)
+# =============================================================================
+# wrangler secret put JOBBER_CLIENT_ID
+# wrangler secret put JOBBER_CLIENT_SECRET
+#
+# For production:
+# wrangler secret put JOBBER_CLIENT_ID --env production
+# wrangler secret put JOBBER_CLIENT_SECRET --env production

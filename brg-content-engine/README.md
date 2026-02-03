@@ -4,9 +4,8 @@ Cloudflare Worker that automates content creation from Jobber job completions.
 
 ## What It Does
 
-When a job visit is marked complete in Jobber, this worker:
-1. Receives the webhook notification
-2. Logs the event for processing
+1. Connects to Blue River Gutters' Jobber account via OAuth 2.0
+2. Receives webhook notifications when jobs are completed
 3. (Future) Triggers content generation workflows
 
 ## Endpoints
@@ -15,7 +14,76 @@ When a job visit is marked complete in Jobber, this worker:
 |----------|--------|---------|
 | `/` | GET | Service info |
 | `/health` | GET | Health check |
+| `/auth/jobber` | GET | Start OAuth flow |
+| `/auth/jobber/callback` | GET | OAuth callback (Jobber redirects here) |
+| `/auth/status` | GET | Check connection status |
 | `/webhook/jobber` | POST | Receive Jobber webhooks |
+
+## Setup
+
+### 1. Create KV Namespace
+
+```bash
+# Create the KV namespace for storing tokens
+wrangler kv:namespace create "TOKENS"
+
+# You'll get output like:
+# [[kv_namespaces]]
+# binding = "TOKENS"
+# id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Add this to wrangler.toml (uncomment the kv_namespaces section and add your ID)
+```
+
+### 2. Add Jobber Credentials
+
+```bash
+# Add your Jobber app credentials as secrets
+wrangler secret put JOBBER_CLIENT_ID
+# Enter your client ID when prompted
+
+wrangler secret put JOBBER_CLIENT_SECRET
+# Enter your client secret when prompted
+```
+
+### 3. Deploy
+
+```bash
+npm install
+npm run deploy
+```
+
+### 4. Configure Jobber
+
+1. Go to [Jobber Developer Center](https://developer.getjobber.com/)
+2. Find your app settings
+3. Set the **OAuth Callback URL** to:
+   ```
+   https://brg-content-engine.<your-subdomain>.workers.dev/auth/jobber/callback
+   ```
+
+### 5. Connect Account
+
+1. Visit `https://brg-content-engine.<your-subdomain>.workers.dev/auth/jobber`
+2. Log in to Jobber and authorize the app
+3. You'll be redirected back with a success message
+
+### 6. Verify Connection
+
+```bash
+curl https://brg-content-engine.<your-subdomain>.workers.dev/auth/status
+```
+
+Should return:
+```json
+{
+  "connected": true,
+  "token_type": "Bearer",
+  "expires_at": "2026-02-03T15:30:00.000Z",
+  "is_expired": false,
+  "has_refresh_token": true
+}
+```
 
 ## Local Development
 
@@ -23,16 +91,27 @@ When a job visit is marked complete in Jobber, this worker:
 # Install dependencies
 npm install
 
+# Create a .dev.vars file for local secrets
+echo "JOBBER_CLIENT_ID=your_client_id" >> .dev.vars
+echo "JOBBER_CLIENT_SECRET=your_client_secret" >> .dev.vars
+
 # Start local dev server
 npm run dev
 
 # Worker runs at http://localhost:8787
 ```
 
-## Testing the Webhook
+Note: OAuth callback won't work locally unless you use a tunnel (ngrok, cloudflared, etc.)
 
+## Testing
+
+### Test OAuth Status
 ```bash
-# Send a test webhook
+curl http://localhost:8787/auth/status
+```
+
+### Test Webhook
+```bash
 curl -X POST http://localhost:8787/webhook/jobber \
   -H "Content-Type: application/json" \
   -d '{
@@ -47,58 +126,57 @@ curl -X POST http://localhost:8787/webhook/jobber \
   }'
 ```
 
-## Deployment
+## Token Management
 
-```bash
-# Deploy to Cloudflare Workers
-npm run deploy
+The worker automatically handles token refresh:
 
-# Deploy to production environment
-npm run deploy:production
-
-# View live logs
-npm run tail
-```
-
-## Jobber Webhook Setup
-
-1. Deploy this worker to get your URL (e.g., `brg-content-engine.your-subdomain.workers.dev`)
-2. In Jobber, go to Settings → Integrations → Webhooks
-3. Add a new webhook:
-   - URL: `https://brg-content-engine.your-subdomain.workers.dev/webhook/jobber`
-   - Event: `visit_completed` (or whatever triggers you need)
-4. Test with a sample job completion
+- Access tokens are stored in Cloudflare KV
+- When a token is within 5 minutes of expiring, it's automatically refreshed
+- Refresh tokens are used to get new access tokens
+- If refresh fails, user needs to re-authorize via `/auth/jobber`
 
 ## Future Enhancements
 
-- [ ] Add webhook signature verification (once Jobber provides signing)
-- [ ] Store job data in Cloudflare KV or D1
+- [ ] Add webhook signature verification (HMAC)
 - [ ] Integrate with Claude API for content generation
 - [ ] Send review request emails via Courier
 - [ ] Generate case study drafts from job photos
 - [ ] Track content performance metrics
+- [ ] Multi-tenant support (multiple Jobber accounts)
 
 ## Project Structure
 
 ```
 brg-content-engine/
 ├── src/
-│   └── index.js       # Main worker code
+│   └── index.js       # Main worker code with OAuth + webhooks
 ├── wrangler.toml      # Cloudflare config
 ├── package.json
+├── .dev.vars          # Local secrets (don't commit!)
+├── .gitignore
 └── README.md
 ```
 
-## Environment Variables
+## Environment Variables & Secrets
 
-| Variable | Description |
-|----------|-------------|
-| `ENVIRONMENT` | "development" or "production" |
+| Name | Type | Description |
+|------|------|-------------|
+| `ENVIRONMENT` | Variable | "development" or "production" |
+| `JOBBER_CLIENT_ID` | Secret | Jobber app client ID |
+| `JOBBER_CLIENT_SECRET` | Secret | Jobber app client secret |
 
-Add secrets via Wrangler:
-```bash
-wrangler secret put JOBBER_WEBHOOK_SECRET
-```
+## KV Namespaces
+
+| Binding | Purpose |
+|---------|---------|
+| `TOKENS` | Stores OAuth tokens and state |
+
+### KV Keys
+
+| Key | Contents |
+|-----|----------|
+| `jobber:tokens` | Access token, refresh token, expiry info |
+| `oauth_state:{state}` | Temporary state for CSRF protection (TTL: 10min) |
 
 ## Monitoring
 

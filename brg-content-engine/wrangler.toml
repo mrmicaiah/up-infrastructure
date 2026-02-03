@@ -9,7 +9,7 @@ CLOUDINARY_CLOUD_NAME = "dxzw1zwez"
 # KV Namespace for tokens and cache
 [[kv_namespaces]]
 binding = "TOKENS"
-id = "brg-content-tokens"
+id = "0a96048b95784352bd0f57ece5f6d8e5"
 
 [env.production]
 vars = { ENVIRONMENT = "production" }

@@ -14,9 +14,9 @@ id = "0a96048b95784352bd0f57ece5f6d8e5"
 [env.production]
 vars = { ENVIRONMENT = "production" }
 
-# Cron trigger for daily review sync (8am Central = 14:00 UTC)
-[triggers]
-crons = ["0 14 * * *"]
+# Note: Cron trigger removed due to account limit (5 max)
+# Reviews can be synced manually via POST /api/reviews/sync
+# Or set up external cron (e.g., cron-job.org) to hit the endpoint
 
 # ============================================================
 # SECRETS - Add with: wrangler secret put <SECRET_NAME>

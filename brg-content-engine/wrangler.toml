@@ -2,33 +2,19 @@ name = "brg-content-engine"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
-# Development settings
 [vars]
 ENVIRONMENT = "development"
 
-# KV namespace for storing OAuth tokens and job data
-# Create with: wrangler kv:namespace create "TOKENS"
-# Then uncomment and add the ID below:
+# KV: wrangler kv:namespace create "TOKENS"
 # [[kv_namespaces]]
 # binding = "TOKENS"
 # id = "<your-kv-namespace-id>"
 
-# Production environment
 [env.production]
 vars = { ENVIRONMENT = "production" }
 
-# Production KV namespace (create separately for production)
-# Create with: wrangler kv:namespace create "TOKENS" --env production
-# [[env.production.kv_namespaces]]
-# binding = "TOKENS"
-# id = "<your-production-kv-namespace-id>"
-
-# =============================================================================
-# SECRETS (add via wrangler secret put)
-# =============================================================================
+# Secrets:
 # wrangler secret put JOBBER_CLIENT_ID
 # wrangler secret put JOBBER_CLIENT_SECRET
-#
-# For production:
-# wrangler secret put JOBBER_CLIENT_ID --env production
-# wrangler secret put JOBBER_CLIENT_SECRET --env production
+# wrangler secret put CLOUDINARY_API_KEY
+# wrangler secret put CLOUDINARY_API_SECRET

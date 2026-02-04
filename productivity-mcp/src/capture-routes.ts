@@ -40,13 +40,13 @@ export function createCaptureRoutes(env: CaptureEnv) {
       }
 
       try {
-        // POST /api/capture/auth - Authenticate client with slug + PIN
+        // POST /api/capture/auth - Authenticate client with slug (PIN optional)
         if (path === '/capture/auth' && method === 'POST') {
           const body = await request.json() as any;
           const { slug, pin } = body;
           
-          if (!slug || !pin) {
-            return jsonResponse({ error: 'slug and pin required' }, 400);
+          if (!slug) {
+            return jsonResponse({ error: 'slug required' }, 400);
           }
           
           const portal = await db.prepare(
@@ -57,7 +57,8 @@ export function createCaptureRoutes(env: CaptureEnv) {
             return jsonResponse({ error: 'Portal not found' }, 404);
           }
           
-          if (portal.pin !== pin) {
+          // Only validate PIN if portal has one set and it's not empty
+          if (portal.pin && portal.pin.trim() !== '' && portal.pin !== pin) {
             return jsonResponse({ error: 'Invalid PIN' }, 401);
           }
           

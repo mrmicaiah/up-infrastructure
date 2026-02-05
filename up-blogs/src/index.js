@@ -24,15 +24,14 @@
  * 
  * GitHub Publishing (11ty):
  *   Posts are pushed as markdown files with frontmatter to src/posts/[slug].md
- *   GitHub Actions handles the 11ty build and deployment automatically
- *   No HTML generation in this worker — 11ty handles all templating
+ *   GitHub Actions builds the site with 11ty and deploys to GitHub Pages
  * 
  * Admin Endpoints:
  *   POST /admin/register - Register a new blog (requires ADMIN_API_KEY)
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-05 - Migrated to 11ty markdown publishing
+ * Last updated: 2026-02-05 - Migrated publishToGitHub to 11ty (markdown + frontmatter)
  */
 
 const CORS_HEADERS = {
@@ -110,10 +109,35 @@ function generateExcerpt(content, maxLength = 200) {
   return (lastSpace > 0 ? truncated.substring(0, lastSpace) : truncated) + '...';
 }
 
+// Markdown to HTML converter (used for email generation)
+function markdownToHtml(text) {
+  let html = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/_(.+?)_/g, '<em>$1</em>');
+  html = html.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
+  
+  html = html.split('\n\n').map(para => {
+    para = para.trim();
+    if (!para) return '';
+    if (para.startsWith('<')) return para;
+    return `<p>${para.replace(/\n/g, '<br>')}</p>`;
+  }).join('\n');
+  
+  return html;
+}
+
 // Generate email HTML for new post notification
 function generateEmailHtml(post, config) {
   const siteUrl = config.siteUrl || '';
-  const postUrl = `${siteUrl}/posts/${post.slug}/`;
+  const postUrl = `${siteUrl}/${post.slug}/`;
   const primaryColor = config.siteColors?.primary || '#2563eb';
   const siteName = config.siteName || 'Our Blog';
   const excerpt = generateExcerpt(post.content, 300);
@@ -243,149 +267,6 @@ async function sendPublishEmail(post, config, blogId, env) {
   }
 }
 
-// ===== 11ty MARKDOWN PUBLISHING =====
-
-// Generate markdown file content with frontmatter for 11ty
-function generateMarkdownFile(post) {
-  const date = post.published_at || post.date || new Date().toISOString();
-  const excerpt = post.meta_description || generateExcerpt(post.content, 200);
-  const tags = post.tags || [];
-  
-  // Build frontmatter
-  const frontmatter = [
-    '---',
-    `title: "${post.title.replace(/"/g, '\\"')}"`,
-    `date: ${date}`,
-    `author: "${(post.author || 'Unknown').replace(/"/g, '\\"')}"`,
-    `layout: post`,
-    `excerpt: "${excerpt.replace(/"/g, '\\"')}"`,
-  ];
-  
-  if (post.image) {
-    frontmatter.push(`image: "${post.image}"`);
-  }
-  
-  if (post.featured_image_alt) {
-    frontmatter.push(`imageAlt: "${post.featured_image_alt.replace(/"/g, '\\"')}"`);
-  }
-  
-  if (tags.length > 0) {
-    frontmatter.push(`tags:`);
-    for (const tag of tags) {
-      frontmatter.push(`  - "${tag.replace(/"/g, '\\"')}"`);
-    }
-  }
-  
-  frontmatter.push('---');
-  
-  return frontmatter.join('\n') + '\n\n' + (post.content || '');
-}
-
-// Publish post to GitHub as markdown for 11ty
-async function publishToGitHub(post, allPublishedPosts, config, blogId, env) {
-  const { githubRepo, githubToken } = config;
-  const [owner, repo] = githubRepo.split('/');
-  
-  // Push markdown file to src/posts/
-  const markdownContent = generateMarkdownFile(post);
-  await pushToGitHub(owner, repo, `src/posts/${post.slug}.md`, markdownContent, githubToken,
-    `Publish: ${post.title}`);
-  
-  console.log(`Published ${post.slug}.md to ${githubRepo} — 11ty will build automatically`);
-}
-
-// Unpublish: delete the markdown file from GitHub
-async function unpublishFromGitHub(post, config) {
-  const { githubRepo, githubToken } = config;
-  if (!githubRepo || !githubToken) return;
-  
-  const [owner, repo] = githubRepo.split('/');
-  const path = `src/posts/${post.slug}.md`;
-  
-  try {
-    await deleteFromGitHub(owner, repo, path, githubToken,
-      `Unpublish: ${post.title}`);
-    console.log(`Deleted ${path} from ${githubRepo}`);
-  } catch (e) {
-    console.error(`Failed to delete ${path} from GitHub:`, e);
-  }
-}
-
-async function pushToGitHub(owner, repo, path, content, token, message) {
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-  
-  let sha;
-  try {
-    const getRes = await fetch(apiUrl, {
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'User-Agent': 'up-blogs-worker'
-      }
-    });
-    if (getRes.ok) {
-      const data = await getRes.json();
-      sha = data.sha;
-    }
-  } catch (e) {}
-  
-  const res = await fetch(apiUrl, {
-    method: 'PUT',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'User-Agent': 'up-blogs-worker',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      message: message || `Update ${path}`,
-      content: btoa(unescape(encodeURIComponent(content))),
-      sha
-    })
-  });
-  
-  if (!res.ok) {
-    throw new Error(`GitHub push failed: ${res.status}`);
-  }
-}
-
-async function deleteFromGitHub(owner, repo, path, token, message) {
-  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
-  
-  // Get current sha (required for delete)
-  const getRes = await fetch(apiUrl, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'User-Agent': 'up-blogs-worker'
-    }
-  });
-  
-  if (!getRes.ok) {
-    if (getRes.status === 404) {
-      console.log(`File ${path} not found in repo, nothing to delete`);
-      return;
-    }
-    throw new Error(`GitHub GET failed: ${getRes.status}`);
-  }
-  
-  const data = await getRes.json();
-  
-  const res = await fetch(apiUrl, {
-    method: 'DELETE',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'User-Agent': 'up-blogs-worker',
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      message: message || `Delete ${path}`,
-      sha: data.sha
-    })
-  });
-  
-  if (!res.ok) {
-    throw new Error(`GitHub delete failed: ${res.status}`);
-  }
-}
-
 export default {
   // HTTP request handler
   async fetch(request, env) {
@@ -403,6 +284,7 @@ export default {
     
     // ===== ADMIN ENDPOINTS =====
     
+    // Helper to verify admin API key
     const requireAdminAuth = () => {
       const auth = request.headers.get('Authorization');
       const apiKey = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
@@ -714,11 +596,13 @@ export default {
     
     const [, blogId, route] = match;
     
+    // Helper to get API key from header
     const getApiKey = () => {
       const auth = request.headers.get('Authorization');
       return auth?.startsWith('Bearer ') ? auth.slice(7) : null;
     };
     
+    // Helper to verify API key
     const requireAuth = async () => {
       const apiKey = getApiKey();
       if (!apiKey) return false;
@@ -758,7 +642,7 @@ export default {
         const now = new Date();
         const nowIso = now.toISOString();
         
-        // Determine status
+        // Determine status based on scheduled_for and requestedStatus
         let status;
         let shouldPublish = false;
         
@@ -781,7 +665,7 @@ export default {
         
         let post;
         let wasAlreadyPublished = false;
-        let shouldUnpublish = false;
+        let previousSlug = null;
         
         if (id) {
           // Update existing post
@@ -791,11 +675,7 @@ export default {
           }
           
           wasAlreadyPublished = posts[idx].status === 'published' || posts[idx].published;
-          
-          // Detect unpublish: was published, now being set to draft
-          if (wasAlreadyPublished && requestedStatus === 'draft') {
-            shouldUnpublish = true;
-          }
+          previousSlug = posts[idx].slug;
           
           post = {
             ...posts[idx],
@@ -813,18 +693,27 @@ export default {
             updatedAt: nowIso
           };
           
+          // Set published_at if transitioning to published
           if (status === 'published' && !wasAlreadyPublished) {
             post.published_at = nowIso;
             post.date = nowIso;
           }
           
-          // If unpublishing, clear published flags
-          if (shouldUnpublish) {
-            post.published = false;
-          }
-          
+          // Regenerate slug if title changed
           if (title && title !== posts[idx].title) {
             post.slug = slugify(title);
+          }
+          
+          // Handle unpublishing: published -> draft
+          if (wasAlreadyPublished && status === 'draft') {
+            if (config.githubRepo && config.githubToken) {
+              try {
+                await unpublishFromGitHub(previousSlug, config);
+                console.log(`Unpublished from GitHub: ${previousSlug}`);
+              } catch (e) {
+                console.error('GitHub unpublish error:', e);
+              }
+            }
           }
           
           posts[idx] = post;
@@ -858,44 +747,32 @@ export default {
         let emailResult = null;
         let githubResult = null;
         
-        // Handle unpublish — delete markdown from GitHub
-        if (shouldUnpublish && config.githubRepo && config.githubToken) {
-          try {
-            await unpublishFromGitHub(post, config);
-            githubResult = { action: 'unpublished', slug: post.slug };
-          } catch (e) {
-            console.error('GitHub unpublish error:', e);
-            githubResult = { action: 'unpublish_failed', error: e.message };
-          }
-        }
-        
-        // Handle publish — push markdown to GitHub
+        // Only push to GitHub and send email if newly published
         if (shouldPublish && !wasAlreadyPublished) {
           if (config.githubRepo && config.githubToken) {
             try {
-              const publishedPosts = posts.filter(p => p.status === 'published' || p.published);
-              await publishToGitHub(post, publishedPosts, config, blogId, env);
-              githubResult = { action: 'published', slug: post.slug };
+              await publishToGitHub(post, config);
+              githubResult = { pushed: true, path: `src/posts/${post.slug}.md` };
             } catch (e) {
               console.error('GitHub publish error:', e);
-              githubResult = { action: 'publish_failed', error: e.message };
+              githubResult = { pushed: false, error: e.message };
             }
           }
           
-          // Send email via Courier
           emailResult = await sendPublishEmail(post, config, blogId, env);
-        }
-        
-        // Handle republish — update existing published post content
-        if (wasAlreadyPublished && status === 'published' && !shouldUnpublish) {
+        } else if (shouldPublish && wasAlreadyPublished) {
+          // Re-publishing (content update on already-published post) - update the markdown
           if (config.githubRepo && config.githubToken) {
             try {
-              const publishedPosts = posts.filter(p => p.status === 'published' || p.published);
-              await publishToGitHub(post, publishedPosts, config, blogId, env);
-              githubResult = { action: 'updated', slug: post.slug };
+              // If slug changed, remove old file first
+              if (previousSlug && previousSlug !== post.slug) {
+                await unpublishFromGitHub(previousSlug, config);
+              }
+              await publishToGitHub(post, config);
+              githubResult = { pushed: true, path: `src/posts/${post.slug}.md`, updated: true };
             } catch (e) {
               console.error('GitHub update error:', e);
-              githubResult = { action: 'update_failed', error: e.message };
+              githubResult = { pushed: false, error: e.message };
             }
           }
         }
@@ -904,7 +781,6 @@ export default {
           success: true, 
           post,
           published: shouldPublish && !wasAlreadyPublished,
-          unpublished: shouldUnpublish,
           github: githubResult,
           email: emailResult
         });
@@ -1020,20 +896,25 @@ export default {
         posts.splice(idx, 1);
         await env.BLOGS.put(`blog:${blogId}:posts`, JSON.stringify(posts));
         
-        // If post was published, delete from GitHub too
+        // Remove from GitHub if it was published
+        let githubResult = null;
         if (deletedPost.status === 'published' || deletedPost.published) {
           const configJson = await env.BLOGS.get(`blog:${blogId}:config`);
           const config = configJson ? JSON.parse(configJson) : {};
+          
           if (config.githubRepo && config.githubToken) {
             try {
-              await unpublishFromGitHub(deletedPost, config);
+              await unpublishFromGitHub(deletedPost.slug, config);
+              githubResult = { removed: true, path: `src/posts/${deletedPost.slug}.md` };
+              console.log(`Deleted from GitHub: ${deletedPost.slug}`);
             } catch (e) {
-              console.error('GitHub delete on post removal:', e);
+              console.error('GitHub delete error:', e);
+              githubResult = { removed: false, error: e.message };
             }
           }
         }
         
-        return jsonResponse({ success: true });
+        return jsonResponse({ success: true, github: githubResult });
       }
       
       // GET /:blogId/comments/pending - Get pending comments
@@ -1302,14 +1183,12 @@ export default {
           const configJson = await env.BLOGS.get(`blog:${blogId}:config`);
           const config = configJson ? JSON.parse(configJson) : {};
           
-          const publishedPosts = posts.filter(p => p.status === 'published' || p.published);
-          
           for (const post of postsToPublish) {
-            // Push markdown to GitHub (11ty builds automatically)
+            // Push markdown to GitHub (11ty will build)
             if (config.githubRepo && config.githubToken) {
               try {
-                await publishToGitHub(post, publishedPosts, config, blogId, env);
-                console.log(`GitHub push successful: ${post.slug}.md`);
+                await publishToGitHub(post, config);
+                console.log(`GitHub push successful: src/posts/${post.slug}.md`);
               } catch (e) {
                 console.error(`GitHub push failed for ${post.slug}:`, e);
               }
@@ -1330,3 +1209,163 @@ export default {
     }
   }
 };
+
+/**
+ * Publish a post to GitHub as a markdown file with frontmatter.
+ * 11ty handles building HTML, index, RSS, and sitemap.
+ * 
+ * Pushes to: src/posts/[slug].md
+ */
+async function publishToGitHub(post, config) {
+  const { githubRepo, githubToken } = config;
+  const [owner, repo] = githubRepo.split('/');
+  
+  // Format date as YYYY-MM-DD for frontmatter
+  const publishDate = post.published_at || post.date || new Date().toISOString();
+  const dateStr = publishDate.split('T')[0];
+  
+  // Build frontmatter
+  const frontmatter = [
+    '---',
+    `title: "${escapeYaml(post.title)}"`,
+    `date: ${dateStr}`,
+  ];
+  
+  // Excerpt/meta description
+  const excerpt = post.meta_description || generateExcerpt(post.content, 200);
+  if (excerpt) {
+    frontmatter.push(`excerpt: "${escapeYaml(excerpt)}"`);
+  }
+  
+  // Featured image
+  if (post.image) {
+    frontmatter.push(`image: ${post.image}`);
+  }
+  
+  // Featured image alt text
+  if (post.featured_image_alt) {
+    frontmatter.push(`imageAlt: "${escapeYaml(post.featured_image_alt)}"`);
+  }
+  
+  // Author
+  const authorName = post.author || config.authorName || 'Untitled Publishers';
+  frontmatter.push(`author: ${authorName}`);
+  
+  // Tags (YAML list format)
+  if (post.tags && post.tags.length > 0) {
+    frontmatter.push('tags:');
+    for (const tag of post.tags) {
+      frontmatter.push(`  - ${tag}`);
+    }
+  }
+  
+  frontmatter.push('---');
+  
+  // Combine frontmatter + content
+  const markdown = frontmatter.join('\n') + '\n\n' + (post.content || '');
+  
+  // Push to src/posts/[slug].md
+  await pushToGitHub(owner, repo, `src/posts/${post.slug}.md`, markdown, githubToken);
+}
+
+/**
+ * Remove a post's markdown file from GitHub (for unpublishing/deleting).
+ */
+async function unpublishFromGitHub(slug, config) {
+  const { githubRepo, githubToken } = config;
+  const [owner, repo] = githubRepo.split('/');
+  
+  await deleteFromGitHub(owner, repo, `src/posts/${slug}.md`, githubToken);
+}
+
+/**
+ * Escape special characters for YAML string values.
+ */
+function escapeYaml(text) {
+  if (!text) return '';
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, ' ');
+}
+
+async function pushToGitHub(owner, repo, path, content, token) {
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  
+  let sha;
+  try {
+    const getRes = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'up-blogs-worker'
+      }
+    });
+    if (getRes.ok) {
+      const data = await getRes.json();
+      sha = data.sha;
+    }
+  } catch (e) {}
+  
+  const res = await fetch(apiUrl, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'User-Agent': 'up-blogs-worker',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      message: `Publish: ${path}`,
+      content: btoa(unescape(encodeURIComponent(content))),
+      sha
+    })
+  });
+  
+  if (!res.ok) {
+    throw new Error(`GitHub push failed: ${res.status}`);
+  }
+}
+
+async function deleteFromGitHub(owner, repo, path, token) {
+  const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+  
+  // Need to get the file's SHA first
+  let sha;
+  try {
+    const getRes = await fetch(apiUrl, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'User-Agent': 'up-blogs-worker'
+      }
+    });
+    if (getRes.ok) {
+      const data = await getRes.json();
+      sha = data.sha;
+    } else if (getRes.status === 404) {
+      // File doesn't exist, nothing to delete
+      console.log(`File not found on GitHub, skipping delete: ${path}`);
+      return;
+    }
+  } catch (e) {
+    console.error(`Error checking file on GitHub: ${path}`, e);
+    return;
+  }
+  
+  if (!sha) return;
+  
+  const res = await fetch(apiUrl, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'User-Agent': 'up-blogs-worker',
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      message: `Unpublish: ${path}`,
+      sha
+    })
+  });
+  
+  if (!res.ok) {
+    throw new Error(`GitHub delete failed: ${res.status}`);
+  }
+}

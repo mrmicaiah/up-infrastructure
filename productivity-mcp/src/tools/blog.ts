@@ -2,7 +2,7 @@
 // Two APIs supported:
 // 1. micaiahbussey.com via email-bot API (mb_ prefixed tools)
 // 2. Multi-tenant UP Blogs via up-blogs-1 worker (up_blog_ prefixed tools)
-// Last updated: 2026-01-30 - Added ga4_id, facebook_pixel, and config update tools
+// Last updated: 2026-02-11 - Added published_at parameter for backdating posts
 
 import { z } from "zod";
 import type { ToolContext } from '../types';
@@ -421,8 +421,9 @@ export function registerBlogTools(ctx: ToolContext) {
     tags: z.array(z.string()).optional().describe("Post tags"),
     status: z.enum(['draft', 'published']).optional().default('draft').describe("Post status"),
     scheduled_for: z.string().optional().describe("ISO datetime for scheduled publishing"),
+    published_at: z.string().optional().describe("ISO datetime for backdating (sets the publication date)"),
     send_email: z.boolean().optional().default(true).describe("Send email notification on publish"),
-  }, async ({ blog_id, title, content, author, author_id, image, featured_image_alt, meta_description, tags, status, scheduled_for, send_email }) => {
+  }, async ({ blog_id, title, content, author, author_id, image, featured_image_alt, meta_description, tags, status, scheduled_for, published_at, send_email }) => {
     try {
       const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
@@ -436,11 +437,13 @@ export function registerBlogTools(ctx: ToolContext) {
       if (meta_description) postData.meta_description = meta_description;
       if (tags?.length) postData.tags = tags;
       if (scheduled_for) postData.scheduled_for = scheduled_for;
+      if (published_at) postData.published_at = published_at;
       const result: any = await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
       let out = `✅ Post created: **${result.post.title}**\n\n`;
       out += `ID: ${result.post.id}\n`;
       out += `Slug: ${result.post.slug}\n`;
       out += `Status: ${result.post.status}\n`;
+      if (result.post.published_at) out += `Published: ${result.post.published_at}\n`;
       if (result.published) {
         out += `\n🚀 Post was published immediately!`;
         if (result.email?.sent) out += `\n📧 Email notification sent`;
@@ -467,8 +470,9 @@ export function registerBlogTools(ctx: ToolContext) {
     tags: z.array(z.string()).optional().describe("New tags"),
     status: z.enum(['draft', 'scheduled', 'published']).optional().describe("New status"),
     scheduled_for: z.string().optional().describe("New scheduled datetime"),
+    published_at: z.string().optional().describe("ISO datetime for backdating (e.g., '2025-12-15T09:00:00Z')"),
     send_email: z.boolean().optional().describe("Send email on publish"),
-  }, async ({ blog_id, post_id, title, content, author, image, featured_image_alt, meta_description, tags, status, scheduled_for, send_email }) => {
+  }, async ({ blog_id, post_id, title, content, author, image, featured_image_alt, meta_description, tags, status, scheduled_for, published_at, send_email }) => {
     try {
       const apiKey = await getBlogApiKey(env, blog_id);
       if (!apiKey) {
@@ -484,10 +488,14 @@ export function registerBlogTools(ctx: ToolContext) {
       if (tags !== undefined) postData.tags = tags;
       if (status !== undefined) postData.status = status;
       if (scheduled_for !== undefined) postData.scheduled_for = scheduled_for;
+      if (published_at !== undefined) postData.published_at = published_at;
       if (send_email !== undefined) postData.send_email = send_email;
       const result: any = await upBlogsRequest(env, blog_id, '/posts', 'POST', postData, apiKey);
       let out = `✅ Post updated: **${result.post.title}**\n\n`;
       out += `Status: ${result.post.status}\n`;
+      if (result.post.published_at) out += `Published: ${result.post.published_at}\n`;
+      if (result.dateChanged) out += `\n📅 Publication date updated`;
+      if (result.github?.pushed) out += `\n🚀 GitHub markdown updated`;
       if (result.published) out += `\n🚀 Post was published!`;
       return { content: [{ type: "text", text: out }] };
     } catch (e: any) {

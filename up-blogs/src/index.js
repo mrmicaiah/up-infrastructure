@@ -31,7 +31,7 @@
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-05 - Migrated publishToGitHub to 11ty (markdown + frontmatter)
+ * Last updated: 2026-02-11 - Added published_at parameter for backdating posts
  */
 
 const CORS_HEADERS = {
@@ -61,7 +61,6 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
-// Generate a secure random API key (32 characters)
 function generateApiKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const array = new Uint8Array(32);
@@ -79,7 +78,6 @@ function escapeHtml(text) {
     .replace(/'/g, '&#39;');
 }
 
-// Simple hash function for IP anonymization (used for like deduplication)
 async function hashIP(input) {
   const encoder = new TextEncoder();
   const data = encoder.encode(input);
@@ -88,7 +86,6 @@ async function hashIP(input) {
   return hashArray.slice(0, 8).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Generate excerpt from content (strips markdown, limits to specified length)
 function generateExcerpt(content, maxLength = 200) {
   if (!content) return '';
   
@@ -109,7 +106,6 @@ function generateExcerpt(content, maxLength = 200) {
   return (lastSpace > 0 ? truncated.substring(0, lastSpace) : truncated) + '...';
 }
 
-// Markdown to HTML converter (used for email generation)
 function markdownToHtml(text) {
   let html = text
     .replace(/&/g, '&amp;')
@@ -134,7 +130,6 @@ function markdownToHtml(text) {
   return html;
 }
 
-// Generate email HTML for new post notification
 function generateEmailHtml(post, config) {
   const siteUrl = config.siteUrl || '';
   const postUrl = `${siteUrl}/${post.slug}/`;
@@ -155,14 +150,11 @@ function generateEmailHtml(post, config) {
     <tr>
       <td align="center">
         <table width="600" cellpadding="0" cellspacing="0" style="background-color:#ffffff;border-radius:8px;overflow:hidden;max-width:100%;">
-          <!-- Header -->
           <tr>
             <td style="background-color:${primaryColor};padding:24px;text-align:center;">
               <h1 style="margin:0;color:#ffffff;font-size:24px;font-weight:600;">${siteName}</h1>
             </td>
           </tr>
-          
-          <!-- Featured Image -->
           ${post.image ? `
           <tr>
             <td style="padding:0;">
@@ -170,23 +162,17 @@ function generateEmailHtml(post, config) {
             </td>
           </tr>
           ` : ''}
-          
-          <!-- Content -->
           <tr>
             <td style="padding:32px;">
               <h2 style="margin:0 0 16px 0;font-size:28px;line-height:1.3;color:#1a1a1a;">
                 <a href="${postUrl}" style="color:#1a1a1a;text-decoration:none;">${post.title}</a>
               </h2>
-              
               <p style="margin:0 0 8px 0;font-size:14px;color:#666666;">
                 By ${post.author || 'Unknown'} • ${new Date(post.published_at || post.date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
               </p>
-              
               <p style="margin:24px 0;font-size:16px;line-height:1.6;color:#333333;">
                 ${excerpt}
               </p>
-              
-              <!-- CTA Button -->
               <table cellpadding="0" cellspacing="0" style="margin:24px 0;">
                 <tr>
                   <td style="background-color:${primaryColor};border-radius:6px;">
@@ -198,8 +184,6 @@ function generateEmailHtml(post, config) {
               </table>
             </td>
           </tr>
-          
-          <!-- Footer -->
           <tr>
             <td style="background-color:#f9f9f9;padding:24px;text-align:center;border-top:1px solid #eeeeee;">
               <p style="margin:0 0 8px 0;font-size:14px;color:#666666;">
@@ -218,7 +202,6 @@ function generateEmailHtml(post, config) {
 </html>`;
 }
 
-// Send email notification via Courier when post is published
 async function sendPublishEmail(post, config, blogId, env) {
   if (post.send_email === false) {
     console.log(`Skipping email for post "${post.title}" - send_email is false`);
@@ -268,7 +251,6 @@ async function sendPublishEmail(post, config, blogId, env) {
 }
 
 export default {
-  // HTTP request handler
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS_HEADERS });
@@ -277,14 +259,10 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     
-    // Health check
     if (path === '/' || path === '/health') {
-      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '2.0.0' });
+      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '2.1.0' });
     }
     
-    // ===== ADMIN ENDPOINTS =====
-    
-    // Helper to verify admin API key
     const requireAdminAuth = () => {
       const auth = request.headers.get('Authorization');
       const apiKey = auth?.startsWith('Bearer ') ? auth.slice(7) : null;
@@ -292,7 +270,7 @@ export default {
       return apiKey === env.ADMIN_API_KEY;
     };
     
-    // POST /admin/register - Register a new blog
+    // POST /admin/register
     if (path === '/admin/register' && request.method === 'POST') {
       if (!requireAdminAuth()) {
         return jsonResponse({ error: 'Unauthorized - Admin API key required' }, 401);
@@ -301,24 +279,10 @@ export default {
       try {
         const body = await request.json();
         const {
-          blog_id,
-          site_name,
-          site_url,
-          site_description,
-          author_name,
-          author_id,
-          courier_list_slug,
-          github_repo,
-          github_token,
-          twitter_handle,
-          favicon,
-          default_image,
-          site_colors,
-          publisher_name,
-          publisher_logo,
-          author_url,
-          ga4_id,
-          facebook_pixel
+          blog_id, site_name, site_url, site_description, author_name, author_id,
+          courier_list_slug, github_repo, github_token, twitter_handle, favicon,
+          default_image, site_colors, publisher_name, publisher_logo, author_url,
+          ga4_id, facebook_pixel
         } = body;
         
         if (!blog_id) {
@@ -376,7 +340,7 @@ export default {
       }
     }
     
-    // PUT /admin/config/:blogId - Update blog config
+    // PUT /admin/config/:blogId
     if (path.match(/^\/admin\/config\/[a-z0-9-]+$/) && request.method === 'PUT') {
       if (!requireAdminAuth()) {
         return jsonResponse({ error: 'Unauthorized - Admin API key required' }, 401);
@@ -394,23 +358,10 @@ export default {
         const body = await request.json();
         
         const {
-          site_name,
-          site_url,
-          site_description,
-          author_name,
-          author_id,
-          courier_list_slug,
-          github_repo,
-          github_token,
-          twitter_handle,
-          favicon,
-          default_image,
-          site_colors,
-          publisher_name,
-          publisher_logo,
-          author_url,
-          ga4_id,
-          facebook_pixel
+          site_name, site_url, site_description, author_name, author_id,
+          courier_list_slug, github_repo, github_token, twitter_handle, favicon,
+          default_image, site_colors, publisher_name, publisher_logo, author_url,
+          ga4_id, facebook_pixel
         } = body;
         
         const updatedConfig = {
@@ -452,7 +403,7 @@ export default {
       }
     }
     
-    // GET /admin/config/:blogId - Get blog config (admin only)
+    // GET /admin/config/:blogId
     if (path.match(/^\/admin\/config\/[a-z0-9-]+$/) && request.method === 'GET') {
       if (!requireAdminAuth()) {
         return jsonResponse({ error: 'Unauthorized - Admin API key required' }, 401);
@@ -484,7 +435,7 @@ export default {
       }
     }
     
-    // GET /admin/blogs - List all registered blogs (admin only)
+    // GET /admin/blogs
     if (path === '/admin/blogs' && request.method === 'GET') {
       if (!requireAdminAuth()) {
         return jsonResponse({ error: 'Unauthorized - Admin API key required' }, 401);
@@ -535,10 +486,7 @@ export default {
         
         blogs.sort((a, b) => a.name.localeCompare(b.name));
         
-        return jsonResponse({ 
-          blogs,
-          total: blogs.length
-        });
+        return jsonResponse({ blogs, total: blogs.length });
         
       } catch (e) {
         console.error('Admin list blogs error:', e);
@@ -546,7 +494,7 @@ export default {
       }
     }
     
-    // GET /blogs - List all blogs (public, no API keys exposed)
+    // GET /blogs (public)
     if (path === '/blogs' && request.method === 'GET') {
       try {
         const blogs = [];
@@ -596,13 +544,11 @@ export default {
     
     const [, blogId, route] = match;
     
-    // Helper to get API key from header
     const getApiKey = () => {
       const auth = request.headers.get('Authorization');
       return auth?.startsWith('Bearer ') ? auth.slice(7) : null;
     };
     
-    // Helper to verify API key
     const requireAuth = async () => {
       const apiKey = getApiKey();
       if (!apiKey) return false;
@@ -611,9 +557,7 @@ export default {
     };
     
     try {
-      // ===== AUTHENTICATED ENDPOINTS =====
-      
-      // POST /:blogId/posts - Create/update post with scheduling support
+      // POST /:blogId/posts - Create/update post
       if (route === 'posts' && request.method === 'POST') {
         if (!await requireAuth()) return jsonResponse({ error: 'Unauthorized' }, 401);
         
@@ -628,6 +572,7 @@ export default {
           author_id,
           meta_description,
           scheduled_for,
+          published_at: requestedPublishedAt,  // NEW: Accept published_at for backdating
           status: requestedStatus,
           send_email = true,
           tags = []
@@ -642,7 +587,7 @@ export default {
         const now = new Date();
         const nowIso = now.toISOString();
         
-        // Determine status based on scheduled_for and requestedStatus
+        // Determine status
         let status;
         let shouldPublish = false;
         
@@ -666,6 +611,7 @@ export default {
         let post;
         let wasAlreadyPublished = false;
         let previousSlug = null;
+        let dateChanged = false;  // Track if published_at changed (for GitHub re-push)
         
         if (id) {
           // Update existing post
@@ -676,6 +622,11 @@ export default {
           
           wasAlreadyPublished = posts[idx].status === 'published' || posts[idx].published;
           previousSlug = posts[idx].slug;
+          
+          // Check if published_at is being changed
+          if (requestedPublishedAt && requestedPublishedAt !== posts[idx].published_at) {
+            dateChanged = true;
+          }
           
           post = {
             ...posts[idx],
@@ -693,11 +644,17 @@ export default {
             updatedAt: nowIso
           };
           
-          // Set published_at if transitioning to published
-          if (status === 'published' && !wasAlreadyPublished) {
+          // Handle published_at - allow direct setting for backdating
+          if (requestedPublishedAt !== undefined) {
+            // Explicit published_at provided - use it (for backdating)
+            post.published_at = requestedPublishedAt;
+            post.date = requestedPublishedAt;
+          } else if (status === 'published' && !wasAlreadyPublished) {
+            // Transitioning to published without explicit date - use now
             post.published_at = nowIso;
             post.date = nowIso;
           }
+          // If already published and no new date provided, keep existing dates
           
           // Regenerate slug if title changed
           if (title && title !== posts[idx].title) {
@@ -719,6 +676,8 @@ export default {
           posts[idx] = post;
         } else {
           // Create new post
+          const publishedAt = requestedPublishedAt || (status === 'published' ? nowIso : null);
+          
           post = {
             id: generateId(),
             title,
@@ -732,8 +691,8 @@ export default {
             status,
             scheduled_for: scheduled_for || null,
             tags: tags || [],
-            published_at: status === 'published' ? nowIso : null,
-            date: status === 'published' ? nowIso : null,
+            published_at: publishedAt,
+            date: publishedAt,
             published: status === 'published',
             send_email: send_email,
             createdAt: nowIso,
@@ -747,8 +706,9 @@ export default {
         let emailResult = null;
         let githubResult = null;
         
-        // Only push to GitHub and send email if newly published
+        // Push to GitHub if newly published OR if date changed on already-published post
         if (shouldPublish && !wasAlreadyPublished) {
+          // Newly published
           if (config.githubRepo && config.githubToken) {
             try {
               await publishToGitHub(post, config);
@@ -760,16 +720,15 @@ export default {
           }
           
           emailResult = await sendPublishEmail(post, config, blogId, env);
-        } else if (shouldPublish && wasAlreadyPublished) {
-          // Re-publishing (content update on already-published post) - update the markdown
+        } else if (wasAlreadyPublished && (shouldPublish || dateChanged)) {
+          // Already published - update markdown (content change or date backdate)
           if (config.githubRepo && config.githubToken) {
             try {
-              // If slug changed, remove old file first
               if (previousSlug && previousSlug !== post.slug) {
                 await unpublishFromGitHub(previousSlug, config);
               }
               await publishToGitHub(post, config);
-              githubResult = { pushed: true, path: `src/posts/${post.slug}.md`, updated: true };
+              githubResult = { pushed: true, path: `src/posts/${post.slug}.md`, updated: true, dateChanged };
             } catch (e) {
               console.error('GitHub update error:', e);
               githubResult = { pushed: false, error: e.message };
@@ -781,12 +740,13 @@ export default {
           success: true, 
           post,
           published: shouldPublish && !wasAlreadyPublished,
+          dateChanged,
           github: githubResult,
           email: emailResult
         });
       }
       
-      // GET /:blogId/posts - List posts with optional filters and field selection
+      // GET /:blogId/posts
       if (route === 'posts' && request.method === 'GET') {
         if (!await requireAuth()) return jsonResponse({ error: 'Unauthorized' }, 401);
         
@@ -846,11 +806,11 @@ export default {
         return jsonResponse({ posts });
       }
       
-      // GET /:blogId/posts/:slugOrId - Get single post by slug or ID (authenticated)
+      // GET /:blogId/posts/:slugOrId
       if (route.startsWith('posts/') && route.split('/').length === 2 && request.method === 'GET') {
         const routeParts = route.split('/');
         if (routeParts[1] === 'like' || routeParts[1] === 'likes') {
-          // Fall through to public endpoints below
+          // Fall through to public endpoints
         } else {
           if (!await requireAuth()) return jsonResponse({ error: 'Unauthorized' }, 401);
           
@@ -896,7 +856,6 @@ export default {
         posts.splice(idx, 1);
         await env.BLOGS.put(`blog:${blogId}:posts`, JSON.stringify(posts));
         
-        // Remove from GitHub if it was published
         let githubResult = null;
         if (deletedPost.status === 'published' || deletedPost.published) {
           const configJson = await env.BLOGS.get(`blog:${blogId}:config`);
@@ -917,7 +876,7 @@ export default {
         return jsonResponse({ success: true, github: githubResult });
       }
       
-      // GET /:blogId/comments/pending - Get pending comments
+      // GET /:blogId/comments/pending
       if (route === 'comments/pending' && request.method === 'GET') {
         if (!await requireAuth()) return jsonResponse({ error: 'Unauthorized' }, 401);
         
@@ -976,9 +935,9 @@ export default {
         return jsonResponse({ success: true });
       }
       
-      // ===== PUBLIC ENDPOINTS =====
+      // PUBLIC ENDPOINTS
       
-      // POST /:blogId/posts/:postId/like - Like a post (public)
+      // POST /:blogId/posts/:postId/like
       if (route.match(/^posts\/[^/]+\/like$/) && request.method === 'POST') {
         const postId = route.split('/')[1];
         const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
@@ -998,7 +957,7 @@ export default {
         return jsonResponse({ success: true, count: likes.count });
       }
       
-      // GET /:blogId/posts/:postId/likes - Get like count (public)
+      // GET /:blogId/posts/:postId/likes
       if (route.match(/^posts\/[^/]+\/likes$/) && request.method === 'GET') {
         const postId = route.split('/')[1];
         const likesJson = await env.BLOGS.get(`blog:${blogId}:likes:${postId}`);
@@ -1006,7 +965,7 @@ export default {
         return jsonResponse({ count: likes.count });
       }
       
-      // POST /:blogId/subscribe - Subscribe with Courier forwarding
+      // POST /:blogId/subscribe
       if (route === 'subscribe' && request.method === 'POST') {
         let email, honeypot;
         
@@ -1079,7 +1038,7 @@ export default {
         });
       }
       
-      // POST /:blogId/comments - Public comment submission
+      // POST /:blogId/comments
       if (route === 'comments' && request.method === 'POST') {
         const { postId, name, email, content, website, captchaAnswer, captchaExpected } = await request.json();
         
@@ -1112,7 +1071,7 @@ export default {
         return jsonResponse({ success: true, message: 'Comment submitted for review' });
       }
       
-      // GET /:blogId/comments/:postId - Get approved comments for a post
+      // GET /:blogId/comments/:postId
       if (route.startsWith('comments/') && request.method === 'GET') {
         const postId = route.split('/')[1];
         
@@ -1136,7 +1095,6 @@ export default {
     }
   },
 
-  // Cron trigger handler - runs hourly to publish scheduled posts
   async scheduled(event, env, ctx) {
     console.log('Cron triggered at:', new Date().toISOString());
     
@@ -1184,7 +1142,6 @@ export default {
           const config = configJson ? JSON.parse(configJson) : {};
           
           for (const post of postsToPublish) {
-            // Push markdown to GitHub (11ty will build)
             if (config.githubRepo && config.githubToken) {
               try {
                 await publishToGitHub(post, config);
@@ -1194,7 +1151,6 @@ export default {
               }
             }
             
-            // Send email via Courier
             const emailResult = await sendPublishEmail(post, config, blogId, env);
             if (emailResult.sent) {
               totalEmails++;
@@ -1210,48 +1166,35 @@ export default {
   }
 };
 
-/**
- * Publish a post to GitHub as a markdown file with frontmatter.
- * 11ty handles building HTML, index, RSS, and sitemap.
- * 
- * Pushes to: src/posts/[slug].md
- */
 async function publishToGitHub(post, config) {
   const { githubRepo, githubToken } = config;
   const [owner, repo] = githubRepo.split('/');
   
-  // Format date as YYYY-MM-DD for frontmatter
   const publishDate = post.published_at || post.date || new Date().toISOString();
   const dateStr = publishDate.split('T')[0];
   
-  // Build frontmatter
   const frontmatter = [
     '---',
     `title: "${escapeYaml(post.title)}"`,
     `date: ${dateStr}`,
   ];
   
-  // Excerpt/meta description
   const excerpt = post.meta_description || generateExcerpt(post.content, 200);
   if (excerpt) {
     frontmatter.push(`excerpt: "${escapeYaml(excerpt)}"`);
   }
   
-  // Featured image
   if (post.image) {
     frontmatter.push(`image: ${post.image}`);
   }
   
-  // Featured image alt text
   if (post.featured_image_alt) {
     frontmatter.push(`imageAlt: "${escapeYaml(post.featured_image_alt)}"`);
   }
   
-  // Author
   const authorName = post.author || config.authorName || 'Untitled Publishers';
   frontmatter.push(`author: ${authorName}`);
   
-  // Tags (YAML list format)
   if (post.tags && post.tags.length > 0) {
     frontmatter.push('tags:');
     for (const tag of post.tags) {
@@ -1261,16 +1204,11 @@ async function publishToGitHub(post, config) {
   
   frontmatter.push('---');
   
-  // Combine frontmatter + content
   const markdown = frontmatter.join('\n') + '\n\n' + (post.content || '');
   
-  // Push to src/posts/[slug].md
   await pushToGitHub(owner, repo, `src/posts/${post.slug}.md`, markdown, githubToken);
 }
 
-/**
- * Remove a post's markdown file from GitHub (for unpublishing/deleting).
- */
 async function unpublishFromGitHub(slug, config) {
   const { githubRepo, githubToken } = config;
   const [owner, repo] = githubRepo.split('/');
@@ -1278,9 +1216,6 @@ async function unpublishFromGitHub(slug, config) {
   await deleteFromGitHub(owner, repo, `src/posts/${slug}.md`, githubToken);
 }
 
-/**
- * Escape special characters for YAML string values.
- */
 function escapeYaml(text) {
   if (!text) return '';
   return text
@@ -1328,7 +1263,6 @@ async function pushToGitHub(owner, repo, path, content, token) {
 async function deleteFromGitHub(owner, repo, path, token) {
   const apiUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
   
-  // Need to get the file's SHA first
   let sha;
   try {
     const getRes = await fetch(apiUrl, {
@@ -1341,7 +1275,6 @@ async function deleteFromGitHub(owner, repo, path, token) {
       const data = await getRes.json();
       sha = data.sha;
     } else if (getRes.status === 404) {
-      // File doesn't exist, nothing to delete
       console.log(`File not found on GitHub, skipping delete: ${path}`);
       return;
     }

@@ -14,6 +14,9 @@ export const ALLOWED_ORIGINS = [
   'https://untitledpublishers.com',
   'https://www.untitledpublishers.com',
   'https://proverbs.untitledpublishers.com',
+  'https://the-hot-mess.untitledpublishers.com',
+  'https://beyond-fake-studying.untitledpublishers.com',
+  'https://systems-under-siege.untitledpublishers.com',
   'https://contractorsparty.com',
   'https://www.contractorsparty.com',
   'http://localhost:3000',
@@ -35,9 +38,16 @@ export function checkAuth(request, env) {
 export function getCorsHeaders(request) {
   const origin = request.headers.get('Origin');
   const headers = { ...CORS_HEADERS };
+  
+  // Check exact match first
   if (origin && ALLOWED_ORIGINS.includes(origin)) {
     headers['Access-Control-Allow-Origin'] = origin;
   }
+  // Also allow any *.untitledpublishers.com subdomain
+  else if (origin && origin.endsWith('.untitledpublishers.com')) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  
   return headers;
 }
 

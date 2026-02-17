@@ -31,7 +31,7 @@
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-16 - Fixed cron to use scheduled_for date as published_at
+ * Last updated: 2026-02-17 - Fixed cron to use scheduled_for date instead of now
  */
 
 const CORS_HEADERS = {
@@ -572,7 +572,7 @@ export default {
           author_id,
           meta_description,
           scheduled_for,
-          published_at: requestedPublishedAt,  // NEW: Accept published_at for backdating
+          published_at: requestedPublishedAt,
           status: requestedStatus,
           send_email = true,
           tags = []
@@ -611,7 +611,7 @@ export default {
         let post;
         let wasAlreadyPublished = false;
         let previousSlug = null;
-        let dateChanged = false;  // Track if published_at changed (for GitHub re-push)
+        let dateChanged = false;
         
         if (id) {
           // Update existing post
@@ -623,7 +623,6 @@ export default {
           wasAlreadyPublished = posts[idx].status === 'published' || posts[idx].published;
           previousSlug = posts[idx].slug;
           
-          // Check if published_at is being changed
           if (requestedPublishedAt && requestedPublishedAt !== posts[idx].published_at) {
             dateChanged = true;
           }
@@ -644,24 +643,18 @@ export default {
             updatedAt: nowIso
           };
           
-          // Handle published_at - allow direct setting for backdating
           if (requestedPublishedAt !== undefined) {
-            // Explicit published_at provided - use it (for backdating)
             post.published_at = requestedPublishedAt;
             post.date = requestedPublishedAt;
           } else if (status === 'published' && !wasAlreadyPublished) {
-            // Transitioning to published without explicit date - use now
             post.published_at = nowIso;
             post.date = nowIso;
           }
-          // If already published and no new date provided, keep existing dates
           
-          // Regenerate slug if title changed
           if (title && title !== posts[idx].title) {
             post.slug = slugify(title);
           }
           
-          // Handle unpublishing: published -> draft
           if (wasAlreadyPublished && status === 'draft') {
             if (config.githubRepo && config.githubToken) {
               try {
@@ -706,9 +699,7 @@ export default {
         let emailResult = null;
         let githubResult = null;
         
-        // Push to GitHub if newly published OR if date changed on already-published post
         if (shouldPublish && !wasAlreadyPublished) {
-          // Newly published
           if (config.githubRepo && config.githubToken) {
             try {
               await publishToGitHub(post, config);
@@ -721,7 +712,6 @@ export default {
           
           emailResult = await sendPublishEmail(post, config, blogId, env);
         } else if (wasAlreadyPublished && (shouldPublish || dateChanged)) {
-          // Already published - update markdown (content change or date backdate)
           if (config.githubRepo && config.githubToken) {
             try {
               if (previousSlug && previousSlug !== post.slug) {
@@ -1123,8 +1113,8 @@ export default {
             const scheduledDate = new Date(post.scheduled_for);
             if (scheduledDate <= now) {
               post.status = 'published';
-              // FIX: Use the scheduled_for date as published_at, not current time
-              // This preserves the intended publication date for proper sorting
+              // FIX: Use scheduled date instead of now!
+              // This preserves the intended publication date for sorting
               post.published_at = post.scheduled_for;
               post.date = post.scheduled_for;
               post.published = true;

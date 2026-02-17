@@ -31,7 +31,7 @@
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-11 - Added published_at parameter for backdating posts
+ * Last updated: 2026-02-16 - Fixed cron to use scheduled_for date as published_at
  */
 
 const CORS_HEADERS = {
@@ -260,7 +260,7 @@ export default {
     const path = url.pathname;
     
     if (path === '/' || path === '/health') {
-      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '2.1.0' });
+      return jsonResponse({ status: 'ok', service: 'up-blogs-1', version: '2.2.0' });
     }
     
     const requireAdminAuth = () => {
@@ -1107,7 +1107,6 @@ export default {
       )];
       
       const now = new Date();
-      const nowIso = now.toISOString();
       let totalPublished = 0;
       let totalEmails = 0;
       
@@ -1124,13 +1123,15 @@ export default {
             const scheduledDate = new Date(post.scheduled_for);
             if (scheduledDate <= now) {
               post.status = 'published';
-              post.published_at = nowIso;
-              post.date = nowIso;
+              // FIX: Use the scheduled_for date as published_at, not current time
+              // This preserves the intended publication date for proper sorting
+              post.published_at = post.scheduled_for;
+              post.date = post.scheduled_for;
               post.published = true;
               updated = true;
               postsToPublish.push(post);
               totalPublished++;
-              console.log(`Publishing scheduled post: ${post.title} (${blogId})`);
+              console.log(`Publishing scheduled post: ${post.title} (${blogId}) with date ${post.scheduled_for}`);
             }
           }
         }

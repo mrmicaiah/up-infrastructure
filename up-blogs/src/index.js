@@ -21,7 +21,7 @@
  * 
  * Email Notifications:
  *   When a post is published, sends email to subscribers via Courier API
- *   Requires COURIER_API_KEY secret to be set
+ *   Uses ADMIN_API_KEY for Courier authentication
  * 
  * GitHub Publishing (11ty):
  *   Posts are pushed as markdown files with frontmatter to src/posts/[slug].md
@@ -32,7 +32,7 @@
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-19 - Fixed Courier API: use list_id field and add auth header
+ * Last updated: 2026-02-19 - Use ADMIN_API_KEY for Courier auth
  */
 
 const CORS_HEADERS = {
@@ -214,10 +214,10 @@ async function sendPublishEmail(post, config, blogId, env) {
     return { sent: false, reason: 'no_list_configured' };
   }
   
-  // Check for Courier API key
-  if (!env.COURIER_API_KEY) {
-    console.error(`Cannot send email for "${post.title}" - COURIER_API_KEY not configured`);
-    return { sent: false, reason: 'no_courier_api_key' };
+  // Check for API key (used for Courier auth)
+  if (!env.ADMIN_API_KEY) {
+    console.error(`Cannot send email for "${post.title}" - ADMIN_API_KEY not configured`);
+    return { sent: false, reason: 'no_api_key' };
   }
   
   try {
@@ -237,7 +237,7 @@ async function sendPublishEmail(post, config, blogId, env) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.COURIER_API_KEY}`
+        'Authorization': `Bearer ${env.ADMIN_API_KEY}`
       },
       body: JSON.stringify(campaignPayload)
     });
@@ -270,8 +270,8 @@ export default {
       return jsonResponse({ 
         status: 'ok', 
         service: 'up-blogs-1', 
-        version: '2.3.0',
-        courier_configured: !!env.COURIER_API_KEY
+        version: '2.3.1',
+        courier_configured: !!env.ADMIN_API_KEY
       });
     }
     

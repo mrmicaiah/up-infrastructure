@@ -27,12 +27,15 @@
  *   Posts are pushed as markdown files with frontmatter to src/posts/[slug].md
  *   GitHub Actions builds the site with 11ty and deploys to GitHub Pages
  * 
+ * Facebook Lead Ads:
+ *   POST /facebook-lead/:list - Receives FB lead webhooks, converts format, forwards to Courier
+ * 
  * Admin Endpoints:
  *   POST /admin/register - Register a new blog (requires ADMIN_API_KEY)
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-19 - Use ADMIN_API_KEY for Courier auth
+ * Last updated: 2026-02-19 - Added Facebook Lead Ads webhook converter
  */
 
 const CORS_HEADERS = {
@@ -257,6 +260,109 @@ async function sendPublishEmail(post, config, blogId, env) {
   }
 }
 
+/**
+ * Extract field value from Facebook Lead Ads field_data array
+ * Facebook sends: [{ "name": "email", "values": ["test@example.com"] }, ...]
+ */
+function extractFacebookField(fieldData, fieldName) {
+  if (!Array.isArray(fieldData)) return null;
+  const field = fieldData.find(f => f.name === fieldName);
+  if (field && Array.isArray(field.values) && field.values.length > 0) {
+    return field.values[0];
+  }
+  return null;
+}
+
+/**
+ * Handle Facebook Lead Ads webhook
+ * Converts Facebook's format to Courier's format and forwards
+ */
+async function handleFacebookLead(request, listSlug) {
+  try {
+    const body = await request.json();
+    console.log('Facebook Lead webhook received:', JSON.stringify(body).substring(0, 500));
+    
+    let email = null;
+    let name = null;
+    
+    // Facebook webhook format: { entry: [{ changes: [{ value: { field_data: [...] } }] }] }
+    if (body.entry && Array.isArray(body.entry)) {
+      for (const entry of body.entry) {
+        if (entry.changes && Array.isArray(entry.changes)) {
+          for (const change of entry.changes) {
+            const fieldData = change.value?.field_data;
+            if (fieldData) {
+              email = email || extractFacebookField(fieldData, 'email');
+              name = name || extractFacebookField(fieldData, 'full_name') 
+                        || extractFacebookField(fieldData, 'first_name');
+            }
+          }
+        }
+      }
+    }
+    
+    // Also check for direct/simple format (some integrations send flattened data)
+    if (!email && body.email) {
+      email = body.email;
+    }
+    if (!name && (body.full_name || body.name || body.first_name)) {
+      name = body.full_name || body.name || body.first_name;
+    }
+    
+    // Check field_data at root level too
+    if (!email && body.field_data) {
+      email = extractFacebookField(body.field_data, 'email');
+      name = name || extractFacebookField(body.field_data, 'full_name')
+                  || extractFacebookField(body.field_data, 'first_name');
+    }
+    
+    if (!email) {
+      console.error('Facebook Lead: No email found in payload');
+      return jsonResponse({ error: 'No email found in payload', received: body }, 400);
+    }
+    
+    // Forward to Courier
+    const courierPayload = {
+      email,
+      list: listSlug,
+      source: 'facebook-lead-ads',
+      ...(name && { name })
+    };
+    
+    console.log(`Forwarding Facebook lead to Courier: ${email} -> ${listSlug}`);
+    
+    const courierRes = await fetch(COURIER_SUBSCRIBE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(courierPayload)
+    });
+    
+    if (courierRes.ok) {
+      const result = await courierRes.json().catch(() => ({}));
+      console.log(`Facebook lead subscribed: ${email} to ${listSlug}`);
+      return jsonResponse({ 
+        success: true, 
+        email,
+        name: name || null,
+        list: listSlug,
+        courier: result 
+      });
+    } else {
+      const error = await courierRes.text().catch(() => 'Unknown error');
+      console.error(`Courier subscribe failed for Facebook lead: ${error}`);
+      return jsonResponse({ 
+        success: false, 
+        error: 'Courier subscribe failed',
+        details: error 
+      }, 500);
+    }
+    
+  } catch (e) {
+    console.error('Facebook Lead webhook error:', e);
+    return jsonResponse({ error: 'Failed to process webhook', details: e.message }, 500);
+  }
+}
+
 export default {
   async fetch(request, env) {
     if (request.method === 'OPTIONS') {
@@ -270,9 +376,34 @@ export default {
       return jsonResponse({ 
         status: 'ok', 
         service: 'up-blogs-1', 
-        version: '2.3.1',
+        version: '2.4.0',
         courier_configured: !!env.ADMIN_API_KEY
       });
+    }
+    
+    // Facebook Lead Ads webhook converter
+    // POST /facebook-lead/:listSlug
+    const fbLeadMatch = path.match(/^\/facebook-lead\/([a-z0-9-]+)$/);
+    if (fbLeadMatch && request.method === 'POST') {
+      const listSlug = fbLeadMatch[1];
+      return handleFacebookLead(request, listSlug);
+    }
+    
+    // Facebook webhook verification (GET request with hub.challenge)
+    if (fbLeadMatch && request.method === 'GET') {
+      const challenge = url.searchParams.get('hub.challenge');
+      const verifyToken = url.searchParams.get('hub.verify_token');
+      
+      // Facebook sends a verification request when setting up the webhook
+      // We accept any verify_token for simplicity (the URL itself is the "secret")
+      if (challenge) {
+        console.log(`Facebook webhook verification for list: ${fbLeadMatch[1]}`);
+        return new Response(challenge, { 
+          status: 200,
+          headers: { 'Content-Type': 'text/plain' }
+        });
+      }
+      return jsonResponse({ error: 'Missing hub.challenge' }, 400);
     }
     
     const requireAdminAuth = () => {

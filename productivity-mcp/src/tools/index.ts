@@ -13,6 +13,7 @@
  * - integrations/→ External services (drive, github, etc.)
  * - system/      → System tools (notes, skills, connections)
  * - client/      → Client-facing tools (capture portals)
+ * - ai/          → AI agent integrations (Manus)
  */
 
 import type { ToolContext } from '../types';
@@ -57,6 +58,9 @@ import { registerSkillsTools } from './skills';
 // === CLIENT ===
 import { registerCaptureTools } from './capture';
 
+// === AI AGENTS ===
+import { registerManusTools } from './manus';
+
 export function registerAllTools(ctx: ToolContext) {
   // Helm (replaces old tasks.ts)
   registerHelmTools(ctx);
@@ -96,6 +100,9 @@ export function registerAllTools(ctx: ToolContext) {
   
   // Client
   registerCaptureTools(ctx);
+  
+  // AI Agents
+  registerManusTools(ctx);
 }
 
 // Re-export for selective use
@@ -121,4 +128,5 @@ export {
   registerNotesTools,
   registerSkillsTools,
   registerCaptureTools,
+  registerManusTools,
 };

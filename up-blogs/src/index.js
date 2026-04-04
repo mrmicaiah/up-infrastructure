@@ -35,7 +35,7 @@
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-02-19 - Added Facebook Lead Ads webhook converter
+ * Last updated: 2026-04-04 - Added /test-courier debug endpoint
  */
 
 const CORS_HEADERS = {
@@ -376,9 +376,72 @@ export default {
       return jsonResponse({ 
         status: 'ok', 
         service: 'up-blogs-1', 
-        version: '2.4.0',
-        courier_configured: !!env.ADMIN_API_KEY
+        version: '2.5.0',
+        courier_configured: !!env.ADMIN_API_KEY,
+        admin_key_length: env.ADMIN_API_KEY ? env.ADMIN_API_KEY.length : 0
       });
+    }
+    
+    // DEBUG: Test Courier connection directly
+    // GET /test-courier?list=the-hot-mess
+    if (path === '/test-courier' && request.method === 'GET') {
+      const listSlug = url.searchParams.get('list') || 'the-hot-mess';
+      
+      if (!env.ADMIN_API_KEY) {
+        return jsonResponse({ 
+          error: 'ADMIN_API_KEY not configured',
+          step: 'pre-check'
+        }, 500);
+      }
+      
+      try {
+        const testPayload = {
+          list_id: listSlug,
+          subject: '[TEST] UP Blog Courier Integration Test',
+          body_html: '<html><body><h1>Test</h1><p>This is a test email from UP Blog to verify Courier integration.</p></body></html>',
+          send_now: false  // Create as draft, don't actually send
+        };
+        
+        console.log('Testing Courier connection with payload:', JSON.stringify(testPayload));
+        console.log('Using API key length:', env.ADMIN_API_KEY.length);
+        
+        const response = await fetch(COURIER_CAMPAIGN_URL, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${env.ADMIN_API_KEY}`
+          },
+          body: JSON.stringify(testPayload)
+        });
+        
+        const responseText = await response.text();
+        let responseJson;
+        try {
+          responseJson = JSON.parse(responseText);
+        } catch {
+          responseJson = null;
+        }
+        
+        return jsonResponse({
+          test: 'courier_connection',
+          list: listSlug,
+          courier_url: COURIER_CAMPAIGN_URL,
+          request_sent: true,
+          response_status: response.status,
+          response_ok: response.ok,
+          response_body: responseJson || responseText,
+          api_key_length: env.ADMIN_API_KEY.length,
+          api_key_preview: env.ADMIN_API_KEY.substring(0, 4) + '...' + env.ADMIN_API_KEY.substring(env.ADMIN_API_KEY.length - 4)
+        });
+        
+      } catch (e) {
+        return jsonResponse({
+          test: 'courier_connection',
+          error: e.message,
+          stack: e.stack,
+          step: 'fetch_failed'
+        }, 500);
+      }
     }
     
     // Facebook Lead Ads webhook converter

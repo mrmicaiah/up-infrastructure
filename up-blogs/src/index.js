@@ -20,8 +20,8 @@
  *   Runs hourly to check for scheduled posts that are due for publishing
  * 
  * Email Notifications:
- *   When a post is published, sends email to subscribers via Courier API
- *   Uses ADMIN_API_KEY for Courier authentication
+ *   When a post is published, sends email to subscribers via Courier service binding
+ *   Uses COURIER service binding for direct worker-to-worker communication
  * 
  * GitHub Publishing (11ty):
  *   Posts are pushed as markdown files with frontmatter to src/posts/[slug].md
@@ -35,7 +35,7 @@
  *   GET /admin/blogs - List all registered blogs (requires ADMIN_API_KEY)
  *   PUT /admin/config/:blogId - Update blog config (requires ADMIN_API_KEY)
  * 
- * Last updated: 2026-04-04 - Added /test-courier debug endpoint
+ * Last updated: 2026-04-04 - Use service binding for Courier calls
  */
 
 const CORS_HEADERS = {
@@ -44,6 +44,7 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// Fallback URLs (used if service binding not available)
 const COURIER_SUBSCRIBE_URL = 'https://email-bot-server.micaiah-tasks.workers.dev/api/subscribe';
 const COURIER_CAMPAIGN_URL = 'https://email-bot-server.micaiah-tasks.workers.dev/api/campaigns';
 
@@ -108,30 +109,6 @@ function generateExcerpt(content, maxLength = 200) {
   const truncated = text.substring(0, maxLength);
   const lastSpace = truncated.lastIndexOf(' ');
   return (lastSpace > 0 ? truncated.substring(0, lastSpace) : truncated) + '...';
-}
-
-function markdownToHtml(text) {
-  let html = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-  
-  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  html = html.replace(/_(.+?)_/g, '<em>$1</em>');
-  html = html.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
-  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-  html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-  
-  html = html.split('\n\n').map(para => {
-    para = para.trim();
-    if (!para) return '';
-    if (para.startsWith('<')) return para;
-    return `<p>${para.replace(/\n/g, '<br>')}</p>`;
-  }).join('\n');
-  
-  return html;
 }
 
 function generateEmailHtml(post, config) {
@@ -205,6 +182,36 @@ function generateEmailHtml(post, config) {
 </html>`;
 }
 
+/**
+ * Call Courier API using service binding (preferred) or fallback to fetch
+ */
+async function callCourier(env, path, method, body, requireAuth = true) {
+  const headers = {
+    'Content-Type': 'application/json'
+  };
+  
+  if (requireAuth && env.ADMIN_API_KEY) {
+    headers['Authorization'] = `Bearer ${env.ADMIN_API_KEY}`;
+  }
+  
+  const requestInit = {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : undefined
+  };
+  
+  // Use service binding if available (avoids 1042 error)
+  if (env.COURIER) {
+    console.log(`Calling Courier via service binding: ${path}`);
+    return env.COURIER.fetch(`https://courier-internal${path}`, requestInit);
+  }
+  
+  // Fallback to direct fetch (may fail with 1042 on workers.dev)
+  console.log(`Calling Courier via fetch (no service binding): ${path}`);
+  const baseUrl = 'https://email-bot-server.micaiah-tasks.workers.dev';
+  return fetch(`${baseUrl}${path}`, requestInit);
+}
+
 async function sendPublishEmail(post, config, blogId, env) {
   if (post.send_email === false) {
     console.log(`Skipping email for post "${post.title}" - send_email is false`);
@@ -223,10 +230,15 @@ async function sendPublishEmail(post, config, blogId, env) {
     return { sent: false, reason: 'no_api_key' };
   }
   
+  // Check for service binding
+  if (!env.COURIER) {
+    console.error(`Cannot send email for "${post.title}" - COURIER service binding not configured`);
+    return { sent: false, reason: 'no_service_binding' };
+  }
+  
   try {
     const emailHtml = generateEmailHtml(post, config);
     
-    // Use list_id (not list) per Courier API spec
     const campaignPayload = {
       list_id: listSlug,
       subject: post.title,
@@ -236,14 +248,7 @@ async function sendPublishEmail(post, config, blogId, env) {
     
     console.log(`Sending email for post "${post.title}" to list "${listSlug}"`);
     
-    const response = await fetch(COURIER_CAMPAIGN_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.ADMIN_API_KEY}`
-      },
-      body: JSON.stringify(campaignPayload)
-    });
+    const response = await callCourier(env, '/api/campaigns', 'POST', campaignPayload);
     
     if (response.ok) {
       const result = await response.json().catch(() => ({}));
@@ -262,7 +267,6 @@ async function sendPublishEmail(post, config, blogId, env) {
 
 /**
  * Extract field value from Facebook Lead Ads field_data array
- * Facebook sends: [{ "name": "email", "values": ["test@example.com"] }, ...]
  */
 function extractFacebookField(fieldData, fieldName) {
   if (!Array.isArray(fieldData)) return null;
@@ -275,9 +279,8 @@ function extractFacebookField(fieldData, fieldName) {
 
 /**
  * Handle Facebook Lead Ads webhook
- * Converts Facebook's format to Courier's format and forwards
  */
-async function handleFacebookLead(request, listSlug) {
+async function handleFacebookLead(request, listSlug, env) {
   try {
     const body = await request.json();
     console.log('Facebook Lead webhook received:', JSON.stringify(body).substring(0, 500));
@@ -285,7 +288,6 @@ async function handleFacebookLead(request, listSlug) {
     let email = null;
     let name = null;
     
-    // Facebook webhook format: { entry: [{ changes: [{ value: { field_data: [...] } }] }] }
     if (body.entry && Array.isArray(body.entry)) {
       for (const entry of body.entry) {
         if (entry.changes && Array.isArray(entry.changes)) {
@@ -301,15 +303,11 @@ async function handleFacebookLead(request, listSlug) {
       }
     }
     
-    // Also check for direct/simple format (some integrations send flattened data)
-    if (!email && body.email) {
-      email = body.email;
-    }
+    if (!email && body.email) email = body.email;
     if (!name && (body.full_name || body.name || body.first_name)) {
       name = body.full_name || body.name || body.first_name;
     }
     
-    // Check field_data at root level too
     if (!email && body.field_data) {
       email = extractFacebookField(body.field_data, 'email');
       name = name || extractFacebookField(body.field_data, 'full_name')
@@ -321,7 +319,6 @@ async function handleFacebookLead(request, listSlug) {
       return jsonResponse({ error: 'No email found in payload', received: body }, 400);
     }
     
-    // Forward to Courier
     const courierPayload = {
       email,
       list: listSlug,
@@ -331,11 +328,8 @@ async function handleFacebookLead(request, listSlug) {
     
     console.log(`Forwarding Facebook lead to Courier: ${email} -> ${listSlug}`);
     
-    const courierRes = await fetch(COURIER_SUBSCRIBE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(courierPayload)
-    });
+    // Use service binding for subscribe (no auth needed for this endpoint)
+    const courierRes = await callCourier(env, '/api/subscribe', 'POST', courierPayload, false);
     
     if (courierRes.ok) {
       const result = await courierRes.json().catch(() => ({}));
@@ -376,45 +370,37 @@ export default {
       return jsonResponse({ 
         status: 'ok', 
         service: 'up-blogs-1', 
-        version: '2.5.0',
-        courier_configured: !!env.ADMIN_API_KEY,
-        admin_key_length: env.ADMIN_API_KEY ? env.ADMIN_API_KEY.length : 0
+        version: '2.6.0',
+        courier_binding: !!env.COURIER,
+        admin_key_configured: !!env.ADMIN_API_KEY
       });
     }
     
-    // DEBUG: Test Courier connection directly
-    // GET /test-courier?list=the-hot-mess
+    // DEBUG: Test Courier connection via service binding
     if (path === '/test-courier' && request.method === 'GET') {
       const listSlug = url.searchParams.get('list') || 'the-hot-mess';
       
       if (!env.ADMIN_API_KEY) {
-        return jsonResponse({ 
-          error: 'ADMIN_API_KEY not configured',
-          step: 'pre-check'
-        }, 500);
+        return jsonResponse({ error: 'ADMIN_API_KEY not configured' }, 500);
+      }
+      
+      if (!env.COURIER) {
+        return jsonResponse({ error: 'COURIER service binding not configured' }, 500);
       }
       
       try {
         const testPayload = {
           list_id: listSlug,
-          subject: '[TEST] UP Blog Courier Integration Test',
-          body_html: '<html><body><h1>Test</h1><p>This is a test email from UP Blog to verify Courier integration.</p></body></html>',
-          send_now: false  // Create as draft, don't actually send
+          subject: '[TEST] UP Blog Service Binding Test',
+          body_html: '<html><body><h1>Test</h1><p>Service binding test from UP Blog.</p></body></html>',
+          send_now: false
         };
         
-        console.log('Testing Courier connection with payload:', JSON.stringify(testPayload));
-        console.log('Using API key length:', env.ADMIN_API_KEY.length);
+        console.log('Testing Courier via service binding...');
         
-        const response = await fetch(COURIER_CAMPAIGN_URL, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${env.ADMIN_API_KEY}`
-          },
-          body: JSON.stringify(testPayload)
-        });
-        
+        const response = await callCourier(env, '/api/campaigns', 'POST', testPayload);
         const responseText = await response.text();
+        
         let responseJson;
         try {
           responseJson = JSON.parse(responseText);
@@ -423,42 +409,31 @@ export default {
         }
         
         return jsonResponse({
-          test: 'courier_connection',
+          test: 'service_binding',
           list: listSlug,
-          courier_url: COURIER_CAMPAIGN_URL,
-          request_sent: true,
+          service_binding: true,
           response_status: response.status,
           response_ok: response.ok,
-          response_body: responseJson || responseText,
-          api_key_length: env.ADMIN_API_KEY.length,
-          api_key_preview: env.ADMIN_API_KEY.substring(0, 4) + '...' + env.ADMIN_API_KEY.substring(env.ADMIN_API_KEY.length - 4)
+          response_body: responseJson || responseText
         });
         
       } catch (e) {
         return jsonResponse({
-          test: 'courier_connection',
+          test: 'service_binding',
           error: e.message,
-          stack: e.stack,
-          step: 'fetch_failed'
+          stack: e.stack
         }, 500);
       }
     }
     
-    // Facebook Lead Ads webhook converter
-    // POST /facebook-lead/:listSlug
+    // Facebook Lead Ads webhook
     const fbLeadMatch = path.match(/^\/facebook-lead\/([a-z0-9-]+)$/);
     if (fbLeadMatch && request.method === 'POST') {
-      const listSlug = fbLeadMatch[1];
-      return handleFacebookLead(request, listSlug);
+      return handleFacebookLead(request, fbLeadMatch[1], env);
     }
     
-    // Facebook webhook verification (GET request with hub.challenge)
     if (fbLeadMatch && request.method === 'GET') {
       const challenge = url.searchParams.get('hub.challenge');
-      const verifyToken = url.searchParams.get('hub.verify_token');
-      
-      // Facebook sends a verification request when setting up the webhook
-      // We accept any verify_token for simplicity (the URL itself is the "secret")
       if (challenge) {
         console.log(`Facebook webhook verification for list: ${fbLeadMatch[1]}`);
         return new Response(challenge, { 
@@ -793,7 +768,6 @@ export default {
         const now = new Date();
         const nowIso = now.toISOString();
         
-        // Determine status
         let status;
         let shouldPublish = false;
         
@@ -820,7 +794,6 @@ export default {
         let dateChanged = false;
         
         if (id) {
-          // Update existing post
           const idx = posts.findIndex(p => p.id === id);
           if (idx === -1) {
             return jsonResponse({ error: 'Post not found' }, 404);
@@ -874,7 +847,6 @@ export default {
           
           posts[idx] = post;
         } else {
-          // Create new post
           const publishedAt = requestedPublishedAt || (status === 'published' ? nowIso : null);
           
           post = {
@@ -1204,11 +1176,7 @@ export default {
             source: `blog:${blogId}`
           };
           
-          const courierRes = await fetch(COURIER_SUBSCRIBE_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(courierPayload)
-          });
+          const courierRes = await callCourier(env, '/api/subscribe', 'POST', courierPayload, false);
           
           if (courierRes.ok) {
             courierSuccess = true;

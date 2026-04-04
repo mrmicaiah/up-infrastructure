@@ -11,3 +11,8 @@ id = "eb9b2852cb44441797e0989ced3178d2"
 
 [triggers]
 crons = ["0 * * * *"]
+
+# Service binding to call Courier worker directly (avoids 1042 error)
+[[services]]
+binding = "COURIER"
+service = "email-bot-server"
